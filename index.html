@@ -1970,6 +1970,16 @@
     return result;
   }
 
+  // invoke() throws on a refusal (err()), which the tool console's own
+  // try/catch turns into readable text. A real agent's execute() has no such
+  // catch above it — an uncaught rejection reaches Chrome's WebMCP bridge as
+  // an opaque "invocation failed", losing the reason. Registered tools go
+  // through this instead so the agent gets the same text the console shows.
+  async function safeInvoke(tool, args, actor) {
+    try { return invoke(tool, args, actor); }
+    catch (e) { log("agent", tool.name + " → error: " + e.message); render(); return "Error: " + e.message; }
+  }
+
   /* ---- registration ---- */
   const mc = (typeof document !== "undefined" && document.modelContext) || null;
   const regCtl = mc ? new AbortController() : null;
@@ -1980,7 +1990,7 @@
       mc.registerTool({
         name: t.name, description: t.description, inputSchema: t.inputSchema,
         annotations: Object.assign({ readOnlyHint: false, untrustedContentHint: false }, t.annotations || {}),
-        execute: async (args) => invoke(t, args, "agent"),
+        execute: async (args) => safeInvoke(t, args, "agent"),
       }, { signal: regCtl.signal });
     }
   }
