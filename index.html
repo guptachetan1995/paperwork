@@ -1,0 +1,2064 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paperwork</title>
+<!--
+  Marlow Mutual renters application — built on the kernel from kernel/CONTRACT.md.
+  Six steps of real conditional depth (SPEC.md); the agent reads the brief card and
+  drafts the form, the human corrects inline. Keep the six numbered sections and
+  route every tool through invoke().
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper:      #F7F4F6;
+    --surface:    #FFFFFF;
+    --surface-2:  #F0EAEE;
+    --line:       #E4DAE0;
+    --line-soft:  #ECE3E8;
+    --ink:        #241820;
+    --ink-2:      #5C4A55;
+    --ink-3:      #8A7683;
+    --accent:     #8D3B72;
+    --accent-ink: #FFFFFF;
+    --accent-wash:#F5E5EF;
+    --focus-ring: #6E2757;
+    --agent:      #8D3B72;
+    --human:      #5C4A55;
+    --crit:       #B03A16;
+    --crit-wash:  #FBEBE4;
+    --warn:       #8A6408;
+    --ok:         #2F6D3C;
+    --shadow:     0 1px 2px rgba(36,24,32,.06), 0 8px 24px -12px rgba(36,24,32,.18);
+    --r:          10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #160F14;
+      --surface:    #20161E;
+      --surface-2:  #2A1D27;
+      --line:       #3A2A35;
+      --line-soft:  #2F222B;
+      --ink:        #F0E6EC;
+      --ink-2:      #BCA7B4;
+      --ink-3:      #8D7A87;
+      --accent:     #E293C6;
+      --accent-ink: #33102A;
+      --accent-wash:#3C2136;
+      --focus-ring: #F2B7DC;
+      --agent:      #E293C6;
+      --human:      #BCA7B4;
+      --crit:       #F08A5D;
+      --crit-wash:  #2E1C14;
+      --warn:       #D6A93B;
+      --ok:         #6FC17F;
+      --shadow:     0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #160F14;
+    --surface:    #20161E;
+    --surface-2:  #2A1D27;
+    --line:       #3A2A35;
+    --line-soft:  #2F222B;
+    --ink:        #F0E6EC;
+    --ink-2:      #BCA7B4;
+    --ink-3:      #8D7A87;
+    --accent:     #E293C6;
+    --accent-ink: #33102A;
+    --accent-wash:#3C2136;
+    --focus-ring: #F2B7DC;
+    --agent:      #E293C6;
+    --human:      #BCA7B4;
+    --crit:       #F08A5D;
+    --crit-wash:  #2E1C14;
+    --warn:       #D6A93B;
+    --ok:         #6FC17F;
+    --shadow:     0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  .shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .wordmark {
+    font-family: Fraunces, Georgia, serif;
+    font-weight: 600; font-size: 21px; letter-spacing: -.01em;
+    display: flex; align-items: baseline; gap: 9px;
+  }
+  .wordmark span { font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-3); font-weight: 400; }
+  .hgap { flex: 1; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .04em;
+    padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2);
+    white-space: nowrap;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
+  .pill.live { border-color: var(--accent); background: var(--accent-wash); color: var(--accent); }
+  .pill.live .dot { background: var(--accent); }
+  .pill.bad .dot { background: var(--crit); }
+
+  .counts { display: flex; gap: 18px; font-family: "IBM Plex Mono", monospace; font-size: 11px; }
+  .counts b { display: block; font-family: "IBM Plex Sans", sans-serif; font-size: 17px;
+    font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .counts i { font-style: normal; color: var(--ink-3); letter-spacing: .1em; text-transform: uppercase; font-size: 9.5px; }
+
+  /* ---------- workbench: rail / canvas / brief ---------- */
+  .deskpad {
+    padding: 20px; flex: 1; min-width: 0;
+    display: grid; grid-template-columns: 196px minmax(0, 620px) 252px;
+    gap: 20px; justify-content: center; align-items: start;
+  }
+
+  .rail { display: flex; flex-direction: column; gap: 6px; position: sticky; top: 16px; }
+  .rail-step {
+    display: flex; align-items: center; gap: 9px; text-align: left; min-width: 0;
+    border: 1px solid transparent; background: none; cursor: pointer;
+    padding: 8px 10px; border-radius: 8px;
+  }
+  .rail-step:hover { background: var(--surface-2); }
+  .rail-step[aria-current="true"] { background: var(--accent-wash); border-color: var(--accent); }
+  .rs-n {
+    width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line);
+    display: grid; place-items: center; flex: none;
+    font-family: "IBM Plex Mono", monospace; font-size: 10px; color: var(--ink-3);
+  }
+  .rail-step[aria-current="true"] .rs-n { border-color: var(--accent); color: var(--accent); }
+  .rs-t { flex: 1; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
+  .rail-step[aria-current="true"] .rs-t { color: var(--ink); font-weight: 500; }
+  .rs-chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 9px; letter-spacing: .06em;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-3);
+  }
+  .rs-chip.partial  { color: var(--warn); border-color: var(--warn); background: none; }
+  .rs-chip.complete { color: var(--ok);   border-color: var(--ok);   background: none; }
+  .rs-chip.pending-review { color: var(--accent); border-color: var(--accent); background: none; }
+  .rs-chip.has-errors { color: var(--crit); border-color: var(--crit); background: none; }
+
+  .form-wrap { width: 100%; max-width: 620px; min-width: 0; }
+  .form-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+  .form-h h2 { font-family: Fraunces, Georgia, serif; font-weight: 600; font-size: 17px; margin: 0; }
+  .form-h .page { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-3); }
+  .hint { font-size: 12px; color: var(--ink-3); margin-bottom: 14px; }
+
+  .brief-card {
+    position: sticky; top: 16px; min-width: 0;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+    box-shadow: var(--shadow); padding: 14px 16px 16px;
+  }
+  .bc-t { font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ink-2); margin-bottom: 8px; }
+  .bc-b { margin: 0; font-family: Fraunces, Georgia, serif; font-size: 13.5px;
+    line-height: 1.7; color: var(--ink); }
+  .bc-hint { margin-top: 10px; font-size: 11.5px; color: var(--ink-3); }
+
+  /* ---------- form fields ---------- */
+  .sheet {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 18px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 15px;
+  }
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .field > label {
+    font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ink-2);
+    display: flex; gap: 6px; align-items: baseline;
+  }
+  .field > label .req { color: var(--crit); }
+  .field input, .field select, .field textarea {
+    font: inherit; font-size: 13.5px; width: 100%; max-width: 100%; min-width: 0;
+    padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  }
+  .field input::placeholder { color: var(--ink-3); }
+  .field .help { font-size: 11.5px; color: var(--ink-3); }
+  .field .help.disc { color: var(--ok); }
+  .field .help.err-msg { color: var(--crit); }
+  /* ---- focus_field's pointing gesture ---- */
+  /* The ring is an OUTLINE, a property none of the state layers below uses, so it
+     composes ON TOP of the pending / uncertain / error / agent-accepted backgrounds
+     instead of being washed out by them — focusing the pending year_built is the
+     SPEC's own video beat. Each field kind needs its own target: 16 of the 40
+     questions are yes/no button pairs with no input to ring, 3 are checkboxes whose
+     UA box is far too small to carry one, and a repeater is a wrapper of wrappers. */
+  .field.focus:not(.check) {
+    outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: 8px;
+  }
+  .field.repeater.focus { outline-offset: 5px; }   /* clears its instance boxes */
+  .field.check.focus > label {
+    outline: 2px solid var(--focus-ring); outline-offset: 4px; border-radius: 6px;
+  }
+  .field.focus input, .field.focus select {
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash);
+  }
+  .field.focus .yn-b { border-color: var(--focus-ring); color: var(--focus-ring); }
+
+  /* ---- field states (SPEC: the pending layer is the diff) ---- */
+  .field.pending, .field.error {
+    background: var(--accent-wash);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 8px 10px 10px;
+  }
+  .field.agent-accepted {
+    background: color-mix(in srgb, var(--accent-wash) 40%, var(--paper));
+    border-radius: 8px;
+    padding: 8px 10px 10px;
+  }
+  /* Declared AFTER .field.agent-accepted on purpose. The two have equal specificity
+     and .error rides alongside the provenance class rather than replacing it, so
+     source order is the whole tie-break — and the case that matters most is exactly
+     the tie: an answer the agent drafted, Priya accepted, and validation then
+     rejected must read as crit, not as a quiet accepted tint. */
+  .field.error {
+    border-left-color: var(--crit);
+    background: var(--crit-wash);
+    border-radius: 0 8px 8px 0;
+  }
+  .unc {
+    font-family: "IBM Plex Mono", monospace; font-size: 9px; letter-spacing: .08em;
+    color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 999px; padding: 1px 7px; white-space: nowrap; align-self: center; flex: none;
+  }
+  .field .help.agent-note { color: var(--accent); }
+  .pacts { margin-left: auto; display: inline-flex; gap: 4px; align-self: center; }
+  .pa {
+    border: 1px solid var(--accent); background: var(--surface); color: var(--accent);
+    width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
+    font-size: 12px; line-height: 1; padding: 0; flex: none;
+  }
+  .pa:hover { background: var(--accent); color: var(--accent-ink); }
+
+  .yn { display: flex; gap: 6px; }
+  .yn-b {
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink-2);
+    padding: 6px 18px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  }
+  .yn-b:hover { border-color: var(--accent); color: var(--accent); }
+  .yn-b.on { background: var(--accent-wash); border-color: var(--accent);
+    color: var(--accent); font-weight: 500; }
+
+  .field input[type="checkbox"] {
+    width: 15px; height: 15px; padding: 0; flex: none; margin: 2px 0 0;
+    accent-color: var(--accent);
+  }
+  .field.check > label {
+    font-family: inherit; font-size: 13px; text-transform: none; letter-spacing: 0;
+    color: var(--ink); display: flex; gap: 9px; align-items: flex-start;
+    cursor: pointer; line-height: 1.5;
+  }
+  .ho {
+    font-family: "IBM Plex Mono", monospace; font-size: 9px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 999px; padding: 1px 6px; white-space: nowrap; align-self: center; flex: none;
+  }
+
+  .sec-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .field.repeater { gap: 9px; }
+  .rep-inst {
+    border: 1px solid var(--line-soft); border-radius: 8px; padding: 12px;
+    display: flex; flex-direction: column; gap: 13px; min-width: 0;
+  }
+  .rep-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .rep-t { font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--accent); }
+  .rep-add { align-self: flex-start; }
+
+  .mirror { border: 1px dashed var(--line); border-radius: 8px; padding: 14px; background: var(--paper); }
+  .mir-t { font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ink-2); margin-bottom: 5px; }
+  .mir-b { font-size: 12.5px; color: var(--ink-3); }
+  /* ---- the five buckets, one row each ----
+     `.mir-row[data-bucket="<name>"] .mir-n` is a DOM CONTRACT, not incidental
+     markup: the smoke spec reads the counts through it to prove the mirror and
+     review_submission agree, and the brief-card tally inherits the same handles.
+     Rename either and both surfaces go quiet rather than red. */
+  .mir-rows { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .mir-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; min-width: 0; }
+  .mir-n { font-family: "IBM Plex Mono", monospace; font-size: 15px; line-height: 1.25;
+    font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-3); }
+  .mir-row[data-bucket="complete"]  .mir-n { color: var(--ok); }
+  .mir-row[data-bucket="pending"]   .mir-n,
+  .mir-row[data-bucket="uncertain"] .mir-n { color: var(--accent); }
+  .mir-row[data-bucket="invalid"]   .mir-n { color: var(--crit); }
+  .mir-l { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-2); }
+  .mir-fields { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; min-width: 0; }
+  .mir-link {
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+    border-radius: 999px; padding: 1px 9px; cursor: pointer; font-size: 11.5px;
+    min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mir-link:hover { border-color: var(--accent); color: var(--accent); }
+  .mir-note { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+  .mir-prem { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .mir-prem b { font-family: Fraunces, Georgia, serif; font-size: 18px; font-weight: 600; }
+  .mir-prem span { font-size: 11.5px; color: var(--ink-3); }
+
+  .submit-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary:disabled:hover { filter: none; }
+  .confirm-card {
+    border: 1px solid var(--ok); border-left: 3px solid var(--ok);
+    border-radius: 0 8px 8px 0; padding: 12px 14px; background: var(--surface-2);
+  }
+  .cc-t { font-family: Fraunces, Georgia, serif; font-size: 15.5px; font-weight: 600; }
+  .cc-b { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; }
+  .cc-n { font-size: 11.5px; color: var(--ink-3); margin-top: 7px; }
+
+  /* ---------- drawer ---------- */
+  .drawer { border-top: 1px solid var(--line); background: var(--surface); }
+  .tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--line-soft); }
+  .tab {
+    background: none; border: 0; border-bottom: 2px solid transparent; cursor: pointer;
+    padding: 9px 11px; font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  .panel { padding: 12px 16px 16px; max-height: 216px; overflow: auto; }
+
+  .log { display: flex; flex-direction: column; gap: 5px;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; }
+  .log-row { display: grid; grid-template-columns: 58px 62px 1fr; gap: 10px; align-items: baseline; }
+  .log-row .t { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .log-row .who { letter-spacing: .08em; text-transform: uppercase; font-size: 9.5px; }
+  .log-row.agent .who { color: var(--agent); }
+  .log-row.you   .who { color: var(--human); }
+  .log-row .msg { color: var(--ink-2); font-family: "IBM Plex Sans", sans-serif; font-size: 12.5px; }
+
+  .console { display: grid; grid-template-columns: 208px 1fr; gap: 14px; }
+  .tool-list { display: flex; flex-direction: column; gap: 3px; max-height: 178px; overflow: auto; }
+  .tool-b {
+    text-align: left; border: 1px solid transparent; background: none; cursor: pointer;
+    padding: 5px 8px; border-radius: 7px;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-2);
+  }
+  .tool-b:hover { background: var(--surface-2); }
+  .tool-b.sel { background: var(--accent-wash); color: var(--accent); border-color: var(--accent); }
+  .tool-b small { display: block; font-family: "IBM Plex Sans", sans-serif; font-size: 11px;
+    color: var(--ink-3); margin-top: 1px; }
+  .runner { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+  .runner textarea {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.5;
+    padding: 8px 10px; border-radius: 8px; resize: vertical; min-height: 62px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink); width: 100%;
+  }
+  .out {
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; white-space: pre-wrap;
+    color: var(--ink-2); background: var(--paper); border: 1px solid var(--line-soft);
+    border-radius: 8px; padding: 8px 10px; max-height: 96px; overflow: auto; margin: 0;
+  }
+  .out.err { color: var(--crit); border-color: var(--crit); background: var(--crit-wash); }
+  .run-bar { display: flex; align-items: center; gap: 9px; }
+  .run-bar .sig { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btn {
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--ink);
+    padding: 6px 11px; border-radius: 8px; cursor: pointer; font-size: 13px; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 500; }
+  .btn.primary:hover { filter: brightness(1.08); color: var(--accent-ink); }
+  .btn.sm { padding: 3px 8px; font-size: 12px; }
+
+  .setup { font-size: 12.5px; color: var(--ink-2); line-height: 1.65; }
+  .setup code { font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+    background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .setup ol { margin: 8px 0 0; padding-left: 20px; }
+  .setup li { margin-bottom: 4px; }
+
+  @media (max-width: 1000px) {
+    .deskpad { grid-template-columns: 172px minmax(0, 1fr); }
+    .brief-card { grid-column: 2; position: static; }
+  }
+  @media (max-width: 980px) {
+    .console { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 700px) {
+    .deskpad { grid-template-columns: minmax(0, 1fr); }
+    .rail { position: static; flex-direction: row; flex-wrap: wrap; }
+    .rail-step { flex: 1 1 auto; }
+    .brief-card { grid-column: auto; }
+  }
+  .site-foot {
+    margin-top: 28px; padding: 14px 0 6px; text-align: center;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-3);
+    overflow-wrap: anywhere;
+  }
+  .site-foot a { color: var(--ink-3); text-decoration-color: var(--accent); }
+  .site-foot a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <header>
+    <div class="wordmark">Marlow Mutual <span>renters application</span></div>
+    <div class="hgap"></div>
+    <div class="counts">
+      <div><b id="c-filled">0</b><i>filled</i></div>
+      <div><b id="c-left">0</b><i>to go</i></div>
+    </div>
+    <div class="pill" id="status"><span class="dot"></span><span id="status-t">checking WebMCP…</span></div>
+  </header>
+
+  <main class="deskpad">
+    <nav class="rail" id="rail" aria-label="Application steps"></nav>
+
+    <div class="form-wrap">
+      <div class="form-h">
+        <h2 id="step-h"></h2>
+        <span class="page" id="page-t"></span>
+      </div>
+      <div class="hint">Answer it yourself, or hand the agent the brief — it drafts, you decide.</div>
+      <div class="sheet" id="form"></div>
+    </div>
+
+    <aside class="brief-card">
+      <div class="bc-t">Priya's brief</div>
+      <p class="bc-b" id="brief"></p>
+      <div class="bc-hint">Ask the agent to fill the application from this — the demo needs no typing.</div>
+    </aside>
+  </main>
+
+  <section class="drawer">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true"  data-p="log">Activity</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="tools">Tool console</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="setup">Run it live</button>
+    </div>
+
+    <div class="panel" id="p-log"><div class="log" id="log"></div></div>
+
+    <div class="panel" id="p-tools" hidden>
+      <div class="console">
+        <div class="tool-list" id="tool-list"></div>
+        <div class="runner">
+          <div class="run-bar">
+            <button class="btn primary sm" id="run">Run tool</button>
+            <span class="sig" id="sig"></span>
+          </div>
+          <textarea id="args" spellcheck="false" aria-label="Tool arguments as JSON"></textarea>
+          <pre class="out" id="out">Pick a tool, edit the arguments, and run it — exactly what an agent does.</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-setup" hidden>
+      <div class="setup">
+        These tools are registered with <code>document.modelContext.registerTool()</code>. To let a real
+        agent drive this page:
+        <ol>
+          <li>Open <code>chrome://flags/#enable-webmcp-testing</code> in Chrome 149+, set it to <b>Enabled</b>, and relaunch.</li>
+          <li>Serve this file over HTTP — <code>npx serve .</code> — since WebMCP needs an origin-isolated document and won't run from <code>file://</code>.</li>
+          <li>Install the <b>Model Context Tool Inspector</b> extension, or open the page in ChatGPT's in-app browser, and describe your situation in plain language.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+  <footer class="site-foot">
+    <a href="https://github.com/guptachetan1995/paperwork">guptachetan1995/paperwork</a> on GitHub
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ============================================================
+     1. STATE  —  the app's own data. WebMCP knows nothing about it.
+     The schema shape here is the contract five later goals extend:
+     field = {id, label, type, options?, value, state, required?,
+              showIf? {field, equals}, note?, humanOnly?}; a repeater
+     field carries template:[subfield defs] + instances:[[subfields]],
+     and instance sub-field ids are dotted ("claims.1.date").
+     Field states: empty | human | pending | agent-accepted | uncertain.
+     state is PROVENANCE — who put the answer there — and nothing else.
+     Validity is DERIVED by validate() on every render and never stored:
+     `error` is a display class, not a sixth state. See SPEC.md "Field states".
+     ============================================================ */
+  const state = {
+    form: "Marlow Mutual — renters insurance application",
+    step: "applicant",   // id of the step on the canvas
+    steps: [],
+  };
+
+  // The seeded brief — verbatim from SPEC.md, em-dash and all.
+  const BRIEF = "I'm Priya Raghavan, priya@example.com, born 14 March 1994. Moving to unit 3B at 48 Alder Court, Portland OR — a 1962 brick walk-up, third floor, smoke detectors but no sprinklers. My partner Sam Okonkwo will live with me and should be on the policy. We have a six-year-old beagle, no bite history. My road bike is worth about $2,400. One prior claim: water damage at my old place, March 2024, around $1,800, resolved. I want replacement cost. Never had a policy cancelled.";
+
+  function seed() {
+    const F = (id, label, type, extra) => Object.assign(
+      { id, label, type, value: "", state: "empty" }, extra || {});
+
+    state.steps = [
+      { id: "applicant", title: "Applicant", fields: [
+        F("full_name",       "Full legal name",          "text",   { required: true }),
+        F("dob",             "Date of birth",            "date",   { required: true }),
+        F("email",           "Email",                    "text",   { required: true }),
+        F("phone",           "Phone",                    "text",   { required: true }),
+        F("current_address", "Current address",          "text",   { required: true }),
+        F("time_at_address", "Time at current address",  "select", { required: true, options: ["under_2", "2_plus"] }),
+        F("prev_address",    "Previous address",         "text",   { required: true, showIf: { field: "time_at_address", equals: "under_2" } }),
+        F("co_applicant",    "Add a co-applicant?",      "yesno",  { required: true }),
+        F("co_name",         "Co-applicant full name",   "text",   { required: true, showIf: { field: "co_applicant", equals: "yes" } }),
+        F("co_dob",          "Co-applicant date of birth", "date", { required: true, showIf: { field: "co_applicant", equals: "yes" } }),
+        F("co_phone",        "Co-applicant phone",       "text",   { showIf: { field: "co_applicant", equals: "yes" } }),
+      ]},
+      { id: "building", title: "Address & building", fields: [
+        F("new_address",        "New address",        "text",   { required: true }),
+        F("unit",               "Unit",               "text"),
+        F("building_type",      "Building type",      "select", { required: true, options: ["apartment", "condo", "house", "other"] }),
+        F("hoa_master_policy",  "Does the HOA carry a master policy?", "yesno", { required: true, showIf: { field: "building_type", equals: "condo" } }),
+        F("year_built",         "Year built",         "number", { required: true }),
+        F("floor",              "Floor",              "number", { required: true }),
+        F("construction_class", "Construction class", "select", { required: true, options: ["frame", "masonry", "brick", "fire_resistive"] }),
+        F("smoke_detectors",    "Smoke detectors?",   "yesno",  { required: true }),
+        F("sprinklers",         "Fire sprinklers?",   "yesno",  { required: true }),
+        F("security_system",    "Security system?",   "yesno",  { required: true }),
+        F("dog",                "Dog on the premises?", "yesno", { required: true }),
+        F("dog_breed",          "Dog breed",          "text",   { required: true, showIf: { field: "dog", equals: "yes" } }),
+        F("dog_bite_history",   "Any bite history?",  "yesno",  { required: true, showIf: { field: "dog", equals: "yes" } }),
+      ]},
+      { id: "coverage", title: "Coverage", fields: [
+        F("personal_property_limit", "Personal property limit", "select", { required: true, options: ["$20,000", "$30,000", "$50,000", "$75,000"] }),
+        F("liability_limit",         "Liability limit",         "select", { required: true, options: ["$100,000", "$300,000", "$500,000"] }),
+        F("deductible",              "Deductible",              "select", { required: true, options: ["$250", "$500", "$1,000"] }),
+        F("cost_basis",              "Loss settlement",         "select", { required: true, options: ["replacement_cost", "actual_cash_value"] }),
+        F("high_value_items",        "Any single item worth more than $2,000?", "yesno", { required: true }),
+        F("scheduled_items", "Scheduled high-value items", "repeater", {
+          showIf: { field: "high_value_items", equals: "yes" },
+          template: [
+            { id: "description", label: "Item description", type: "text",   required: true },
+            { id: "value",       label: "Estimated value",  type: "number", required: true },
+            { id: "appraisal",   label: "Appraisal on file?", type: "yesno", required: true },
+          ],
+          instances: [],
+        }),
+      ]},
+      { id: "history", title: "Prior claims & history", fields: [
+        F("claims_5y", "Any claims in the past five years?", "yesno", { required: true }),
+        F("claims", "Claims in the past five years", "repeater", {
+          showIf: { field: "claims_5y", equals: "yes" },
+          template: [
+            { id: "date",               label: "Date of loss",   type: "date",   required: true },
+            { id: "type",               label: "Type of loss",   type: "select", required: true, options: ["water_damage", "fire", "theft", "liability", "other"] },
+            { id: "amount",             label: "Amount claimed", type: "number", required: true },
+            { id: "at_current_address", label: "At your current address?", type: "yesno", required: true },
+            { id: "resolved",           label: "Fully resolved?", type: "yesno", required: true },
+          ],
+          instances: [],
+        }),
+        F("cancelled",             "Any policy cancelled or non-renewed?", "yesno", { required: true }),
+        F("cancelled_explanation", "What happened?", "text", { required: true, showIf: { field: "cancelled", equals: "yes" } }),
+      ]},
+      { id: "disclosures", title: "Disclosures", fields: [
+        F("business_use",    "Business use of the home?", "yesno", { required: true }),
+        F("wood_stove",      "Wood stove?",               "yesno", { required: true }),
+        F("trampoline_pool", "Trampoline or pool?",       "yesno", { required: true }),
+        F("aggressive_animal", "I attest that no animal kept on the premises has been declared dangerous or aggressive by any authority.", "checkbox", { required: true, humanOnly: true }),
+        F("fraud_ack", "I acknowledge that knowingly giving false or incomplete answers on an insurance application may be a crime.", "checkbox", { required: true, humanOnly: true }),
+      ]},
+      { id: "review", title: "Review & submit", fields: [
+        F("confirm_accuracy", "I have reviewed every answer above and confirm it is accurate and complete.", "checkbox", { required: true, humanOnly: true }),
+      ]},
+    ];
+  }
+
+  /* ---- lookups ---- */
+  const topField = (id) => {
+    for (const s of state.steps) {
+      const f = s.fields.find((x) => x.id === id);
+      if (f) return f;
+    }
+    return null;
+  };
+
+  const instN = (inst) => Number(inst[0].id.split(".")[1]);
+
+  // Every field one step can reach: its top-level fields, repeater rows, and
+  // each instance sub-field (dotted ids such as claims.1.date).
+  function stepAddressable(step) {
+    const out = [];
+    for (const f of step.fields) {
+      out.push(f);
+      if (f.type === "repeater") for (const inst of f.instances) out.push(...inst);
+    }
+    return out;
+  }
+
+  // Every field an id can reach, across all steps.
+  const addressable = () => state.steps.flatMap(stepAddressable);
+
+  const findField = (s) => {
+    if (!s) return null;
+    const q = String(s).trim().toLowerCase();
+    const all = addressable();
+    return all.find((f) => f.id.toLowerCase() === q)
+        || all.find((f) => f.label.toLowerCase().includes(q)) || null;
+  };
+
+  // A field is visible when its showIf chain is satisfied. Instance sub-fields
+  // carry no showIf of their own — they follow their repeater's controlling answer.
+  function visible(f) {
+    if (f.id.includes(".")) {
+      const parent = topField(f.id.split(".")[0]);
+      return !!parent && visible(parent);
+    }
+    if (!f.showIf) return true;
+    const ctl = topField(f.showIf.field);
+    return !!ctl && visible(ctl) && ctl.value === f.showIf.equals;
+  }
+
+  /* ---- validation: DERIVED, never stored ------------------------------------
+     `state` is PROVENANCE — who put the answer there — and nothing else. Validity
+     is computed here, fresh, on every render and on every validate_form call, and
+     `error` is a display class rather than a sixth state. Collapsing the two would
+     break three things at once: agentWrite's overwrite guard reads state, so a
+     human answer that failed a format rule would stop being "human" and become
+     fair game to clobber; acceptField would have nothing to accept; and "a pending
+     draft is never auto-flagged an error" would be unsatisfiable.
+
+     THREE buckets, and the split is the whole design:
+
+       errors    a COMMITTED answer — state human or agent-accepted — that breaks
+                 a rule. ONLY these get the .error wash and an inline message.
+                 A pending or uncertain draft is never one: the agent has committed
+                 nothing, so there is nothing yet to be wrong.
+       missing   visible + required + still empty, WHATEVER the state. Reported and
+                 never painted — about twenty-five required fields are empty the
+                 moment the page boots, and washing them all crit would bury the
+                 pending layer this app exists to show. A field the agent flagged
+                 uncertain and left blank (liability_limit) lands here, not in
+                 errors: an honest "I don't know" is not a mistake.
+       warnings  advisory. Nothing here is invalid and nothing here blocks.
+
+     MESSAGES ARE RULES — "Enter a date as YYYY-MM-DD" — never EXPLAIN.ifBlank's
+     underwriting consequence. EXPLAIN says what the file is priced as when an
+     answer is absent; this says what a valid answer looks like. Two sentences for
+     two questions, and neither is the other's fallback. */
+  const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  const RE_PHONE = /^\+?\d[\d\s().-]{6,}$/;
+  const RE_ISO   = /^\d{4}-\d{2}-\d{2}$/;
+  const SCHEDULE_FLOOR = 2000;
+
+  // ISO dates sort as dates, so every comparison below is a string compare and
+  // `today` is just another ISO string — computed ONCE per validate() call, since
+  // reading the clock per rule could straddle midnight halfway down the form.
+  const isoToday = () => {
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")
+      + "-" + String(d.getDate()).padStart(2, "0");
+  };
+  const plusYears = (iso, n) => (Number(iso.slice(0, 4)) + n) + iso.slice(4);
+
+  const bad = (kind, message) => ({ kind, message });
+  const birthRule = (who) => (v, today) => {
+    if (!RE_ISO.test(v)) return bad("format", "Enter the date of birth as a date, YYYY-MM-DD.");
+    if (v > today) return bad("range", "A date of birth cannot be in the future.");
+    if (plusYears(v, 18) > today) return bad("range", who + " must be at least 18 to be named on the policy.");
+    if (plusYears(v, 120) < today) return bad("range", "That is more than 120 years ago — check the year.");
+    return null;
+  };
+  const phoneRule = (v) => RE_PHONE.test(v) ? null
+    : bad("format", "Enter a phone number as digits with an area code, such as 503-555-0142.");
+
+  // Keyed exactly as EXPLAIN is: a top-level field id, or "<repeater>.<sub-field>"
+  // for a repeating item's question. A rule runs only against a COMMITTED, non-empty
+  // value, so it never has to defend itself against "" or against a draft.
+  const RULES = {
+    email: (v) => RE_EMAIL.test(v) ? null
+      : bad("format", "Enter an email address as name@domain.tld."),
+    phone: phoneRule,
+    co_phone: phoneRule,
+    dob: birthRule("The applicant"),
+    co_dob: birthRule("A co-applicant"),
+    year_built: (v, today) => {
+      const n = Number(v);
+      const thisYear = Number(today.slice(0, 4));
+      if (!Number.isInteger(n)) return bad("format", "Enter the year built as a four-digit year, such as 1962.");
+      return (n < 1800 || n > thisYear)
+        ? bad("range", "Enter a year between 1800 and " + thisYear + ".") : null;
+    },
+    "claims.date": (v, today) => {
+      if (!RE_ISO.test(v)) return bad("format", "Enter the date of loss as a date, YYYY-MM-DD.");
+      return v > today ? bad("range", "A date of loss cannot be in the future.") : null;
+    },
+    "claims.amount": (v) => Number(v) > 0 ? null
+      : bad("range", "Enter the amount claimed as a number greater than 0."),
+    "scheduled_items.value": (v) => Number(v) > 0 ? null
+      : bad("range", "Enter the item's value as a number greater than 0."),
+  };
+
+  // Why a required field is required RIGHT NOW. Only a CONDITIONAL one needs this:
+  // an unconditional field's own label already says everything the rule can. This
+  // is the genuine cross-field content in `missing` — prev_address is required
+  // because of an answer three questions above it, and nothing else on the page
+  // says so.
+  const REQUIRED_WHY = {
+    prev_address: "required because you have been at your current address under two years",
+    co_name: "required because you added a co-applicant",
+    co_dob: "required because you added a co-applicant",
+    hoa_master_policy: "required because the building is a condo",
+    dog_breed: "required because there is a dog on the premises",
+    dog_bite_history: "required because there is a dog on the premises",
+    cancelled_explanation: "required because a policy was cancelled or non-renewed",
+  };
+
+  // Fold a dotted instance id onto its template key exactly as explainKey does:
+  // claims.1.date -> claims.date. No schema id contains a dot of its own.
+  const ruleKey = (id) => id.replace(/\.\d+\./, ".");
+  const committed = (f) => f.state === "human" || f.state === "agent-accepted";
+
+  // The three attestations carry a whole sentence as their label, so naming the
+  // label back at Priya reads as gibberish; the entry carries `label` separately.
+  const missingMessage = (f) => {
+    if (f.type === "checkbox") return "Tick this box — it is required before the application can be submitted.";
+    // A question-shaped label ("Does the HOA carry a master policy?") cannot be spliced in
+    // as a noun phrase — "… is required because …" turns it into gibberish. Ask it instead.
+    const asks = /\?$/.test(f.label);
+    const stem = f.label.replace(/\?$/, "");
+    const why = REQUIRED_WHY[f.id];
+    if (asks) {
+      return why ? stem + "? Required " + why.replace(/^required /, "") + "."
+                 : stem + "? An answer is required.";
+    }
+    return why
+      ? stem + " is " + why + "."
+      : "Answer " + stem.charAt(0).toLowerCase() + stem.slice(1) + " — it is required.";
+  };
+
+  // Advisory only: nothing here is invalid, and nothing here blocks. Warnings read
+  // the value whatever its provenance — telling Priya a DRAFTED item sits under the
+  // schedule threshold is useful before she accepts it, not after — and a warning
+  // accuses nobody, so raising one on a pending write breaks no promise.
+  function stepWarnings(step) {
+    const out = [];
+    const w = (f, kind, message) => out.push({ id: f.id, label: f.label, step: step.id, kind, message });
+    for (const f of step.fields) {
+      if (f.type !== "repeater" || !visible(f)) continue;
+      // A repeating list is on screen at all only because its controlling question
+      // was answered — so an empty list, or a row with nothing in it, is a
+      // contradiction on the face of the form. That is what gets a file referred.
+      const blank = f.instances.filter((inst) => inst.every((sf) => sf.value.trim() === ""));
+      if (!f.instances.length)
+        w(f, "incomplete", f.label + " is empty, but " + topField(f.showIf.field).label
+          .toLowerCase().replace(/\?$/, "") + " is answered \"" + f.showIf.equals + "\".");
+      else if (blank.length)
+        w(f, "incomplete", f.label + " has " + blank.length + " empty "
+          + (blank.length === 1 ? "row" : "rows")
+          + " — a row with nothing in it contradicts the answer that revealed this list.");
+      for (const inst of f.instances) for (const sf of inst) {
+        const n = Number(sf.value);
+        if (ruleKey(sf.id) === "scheduled_items.value" && sf.value.trim() && n > 0 && n < SCHEDULE_FLOOR)
+          w(sf, "threshold", "Scheduling is for single items worth more than $"
+            + SCHEDULE_FLOOR.toLocaleString("en-US")
+            + " — anything under that is already covered by the personal-property limit.");
+      }
+    }
+    return out;
+  }
+
+  // scope: one step object, or nothing for the whole form. Every entry carries its
+  // step id, so validate_form can scope without a second pass over the schema.
+  function validate(scope) {
+    const today = isoToday();
+    const errors = [], missing = [], warnings = [];
+    for (const s of (scope ? [scope] : state.steps)) {
+      for (const f of stepAddressable(s)) {
+        if (f.type === "repeater" || !visible(f)) continue;
+        const v = f.value.trim();
+        if (!v) {
+          if (f.required)
+            missing.push({ id: f.id, label: f.label, step: s.id, kind: "required", message: missingMessage(f) });
+          continue;
+        }
+        const rule = RULES[ruleKey(f.id)];
+        const verdict = (rule && committed(f)) ? rule(v, today) : null;
+        if (verdict)
+          errors.push({ id: f.id, label: f.label, step: s.id, kind: verdict.kind, message: verdict.message });
+      }
+      warnings.push(...stepWarnings(s));
+    }
+    return { errors, missing, warnings };
+  }
+
+  // untouched | partial | pending-review | complete | has-errors — computed over
+  // the step's visible fields (repeater rows expand to their instance sub-fields).
+  // has-errors outranks everything: a committed answer that breaks a rule is the
+  // most urgent thing on the rail. It counts ERRORS ONLY and never a missing
+  // answer — grading all six steps crit before Priya has typed anything would make
+  // the chip meaningless, and a required blank is exactly what `partial` says.
+  // Anything awaiting Priya's verdict outranks the remaining fill-progress grades.
+  function stepState(step) {
+    const fs = [];
+    for (const f of step.fields) {
+      if (!visible(f)) continue;
+      if (f.type === "repeater") { for (const inst of f.instances) fs.push(...inst); }
+      else fs.push(f);
+    }
+    if (!fs.length) return "untouched";
+    if (validate(step).errors.length) return "has-errors";
+    if (fs.some((f) => f.state === "pending" || f.state === "uncertain")) return "pending-review";
+    const answered = fs.filter((f) => f.value.trim() !== "");
+    if (!answered.length) return "untouched";
+    return fs.some((f) => f.required && f.value.trim() === "") ? "partial" : "complete";
+  }
+
+  /* ---- the submission summary: five buckets and the submit gate --------------
+     Derived here, beside validate() and stepState(), because THREE surfaces read
+     it — review_submission's prose, the Review step's mirror, and the disabled
+     state of the submit button itself — and a second copy is how a mirror and a
+     button start disagreeing about whether Priya may sign.
+
+     PRECEDENCE is validate_form's own head-line contract, and it is what keeps
+     the buckets EXCLUSIVE: count a field under its STATE first (pending, then
+     uncertain), else invalid, else missing, else complete. A field the agent
+     flagged uncertain and left blank is required-and-empty too; reported twice it
+     would inflate every count on the page.
+
+     The five buckets do NOT partition the form. A field that is OPTIONAL and
+     still empty (`unit`) is in none of them — it needs nothing and it is not
+     answered — which is why `answerable` is carried out with them and why every
+     count review_submission prints is anchored to it rather than to a total of
+     the buckets. Repeater containers are excluded exactly as validate() excludes
+     them: a list is answered through its rows.
+
+     canSubmit is the gate itself: the four blocking buckets all empty. Warnings
+     are advisory by definition and never appear here — nothing in them blocks. */
+  const BUCKETS = [
+    ["complete",  "Complete"],
+    ["pending",   "Pending your review"],
+    ["uncertain", "Uncertain"],
+    ["invalid",   "Invalid"],
+    ["missing",   "Still needed"],
+  ];
+
+  function summary() {
+    const v = validate();
+    const errs = new Map(v.errors.map((e) => [e.id, e.message]));
+    const miss = new Map(v.missing.map((m) => [m.id, m.message]));
+    const out = { complete: [], pending: [], uncertain: [], invalid: [], missing: [], answerable: 0 };
+    for (const s of state.steps) for (const f of stepAddressable(s)) {
+      if (f.type === "repeater" || !visible(f)) continue;
+      out.answerable++;
+      const e = { id: f.id, label: f.label, step: s.id };
+      if (f.state === "pending") out.pending.push(e);
+      else if (f.state === "uncertain") out.uncertain.push(Object.assign(e, { note: f.note || "" }));
+      else if (errs.has(f.id)) out.invalid.push(Object.assign(e, { note: errs.get(f.id) }));
+      else if (miss.has(f.id)) out.missing.push(Object.assign(e, { note: miss.get(f.id) }));
+      else if (f.value.trim() !== "") out.complete.push(e);
+    }
+    out.canSubmit = !out.pending.length && !out.uncertain.length
+      && !out.invalid.length && !out.missing.length;
+    return out;
+  }
+
+  /* ============================================================
+     2. MUTATIONS  —  shared by the UI and by the tools.
+     setField is the only way an answer changes; add/removeInstance
+     are the only way repeater instances change. agentWrite routes
+     agent drafts through setField, then overrides the state to the
+     pending layer; acceptField is the human ratifying one draft.
+     Both are the write API the fill_section goal reuses.
+     ============================================================ */
+  function setField(f, value) {
+    f.value = String(value == null ? "" : value);
+    f.state = f.value.trim() ? "human" : "empty";
+    f.note = "";   // a raw write resets the agent's annotation; agentWrite re-adds its own
+    submitted = false;   // the receipt described the answers as they were; see its declaration
+    // Answering a controlling question YES immediately creates instance #1 of
+    // an empty repeater; NO merely hides it — values are preserved for re-show.
+    for (const s of state.steps) for (const r of s.fields) {
+      if (r.type === "repeater" && r.showIf && r.showIf.field === f.id
+          && f.value === r.showIf.equals && r.instances.length === 0) {
+        addInstance(r);
+      }
+    }
+  }
+
+  // Why a field is not on screen, in the one sentence an agent can act on: it names
+  // the controlling question and the answer that reveals it. Instance sub-fields carry
+  // no showIf of their own, so the owner is their repeater. ONE sentence, one code
+  // path — agentWrite and focus_field both refuse through this, and never re-spell it.
+  function hiddenReason(f) {
+    const owner = f.id.includes(".") ? topField(f.id.split(".")[0]) : f;
+    return f.label + " (" + f.id + ") is hidden right now — answer "
+      + owner.showIf.field + " with \"" + owner.showIf.equals + "\" first.";
+  }
+
+  // The agent's only way to touch an answer. Every check runs before any
+  // mutation and refusals come back as {reason} — never a throw. On ok the
+  // value goes through setField (repeater spawn and conditionals fire exactly
+  // as for a hand edit), then the state is overridden into the pending layer:
+  // no note -> pending; note + value -> uncertain suggestion; note alone ->
+  // uncertain flag, value untouched (type checks skipped — nothing is written).
+  function agentWrite(f, value, note) {
+    if (f.humanOnly)
+      return { reason: f.id + " is a human-only attestation — Priya must answer it herself." };
+    if (!visible(f)) return { reason: hiddenReason(f) };
+    if (f.state === "human" || f.state === "agent-accepted")
+      return { reason: "Priya " + (f.state === "human" ? "set" : "accepted") + " "
+        + f.label + " (" + f.id + ") — ask her instead of overwriting it." };
+    if (f.type === "repeater")
+      return { reason: f.label + " (" + f.id + ") is answered through its numbered sub-fields, such as " + f.id + ".1." + f.template[0].id + "." };
+    const noteOnly = !!note && value.trim() === "";
+    if (!noteOnly) {
+      const opts = f.options || (f.type === "yesno" ? ["yes", "no"] : null);
+      if (opts && !opts.includes(value))
+        return { reason: f.label + " (" + f.id + ") takes one of " + opts.join(", ") + " — not \"" + value + "\"." };
+      if (f.type === "number" && !Number.isFinite(Number(value)))
+        return { reason: f.label + " (" + f.id + ") takes a number — not \"" + value + "\"." };
+      if (f.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value))
+        return { reason: f.label + " (" + f.id + ") takes an ISO date, YYYY-MM-DD — not \"" + value + "\"." };
+      setField(f, value);
+    }
+    f.state = note ? "uncertain" : "pending";
+    f.note = note;
+    submitted = false;   // a note-only write skips setField, so stand the receipt down here
+    return { ok: true };
+  }
+
+  // Human verdict on one agent draft — the ✓ control, and the accept-all
+  // control's unit of work. quiet suppresses the per-field log line so a
+  // section sweep can write one summary row instead of N.
+  function acceptField(f, opts) {
+    if (f.state !== "pending" && f.state !== "uncertain") return;
+    f.state = "agent-accepted";
+    f.note = "";
+    submitted = false;
+    if (!(opts && opts.quiet)) log("you", "Accepted " + f.label.toLowerCase());
+  }
+
+  // Human discard of one agent draft: the value goes through setField (so
+  // conditionals react exactly as a hand clear) and the agent's note is
+  // dropped explicitly. State lands empty.
+  function clearField(f) {
+    setField(f, "");
+    f.note = "";
+  }
+
+  function addInstance(rep) {
+    const n = rep.instances.reduce((m, inst) => Math.max(m, instN(inst)), 0) + 1;
+    rep.instances.push(rep.template.map((t) => Object.assign({}, t, {
+      id: rep.id + "." + n + "." + t.id, value: "", state: "empty",
+    })));
+    submitted = false;
+    return n;
+  }
+
+  function removeInstance(rep, n) {
+    rep.instances = rep.instances.filter((inst) => instN(inst) !== n);
+    submitted = false;
+  }
+
+  /* ============================================================
+     3. RENDER
+     ============================================================ */
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, txt) => { const n = document.createElement(tag); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
+
+  // Display-only dressing — none of this touches the schema.
+  const OPTION_LABELS = {
+    under_2: "Less than 2 years", "2_plus": "2 years or more",
+    replacement_cost: "Replacement cost", actual_cash_value: "Actual cash value",
+    water_damage: "Water damage", fire_resistive: "Fire resistive",
+  };
+  const pretty = (v) => OPTION_LABELS[v] || v.charAt(0).toUpperCase() + v.slice(1);
+  const DISCOUNTS = {
+    smoke_detectors: "Protective-device discount applies.",
+    sprinklers: "Sprinkler discount applies.",
+    security_system: "Security-system discount applies.",
+  };
+  const NOUN = { claims: "Claim", scheduled_items: "Item" };
+
+  // VIEW-ONLY, and deliberately NOT in `state`: the ring is a pointing gesture, not
+  // an answer, so get_form can never observe it and no tool has to reason about it.
+  // focusField does not render — invoke() does that for the caller; only the expiry
+  // timer renders itself. lastScrolledFocus resets per gesture, so a re-render during
+  // one highlight cannot re-yank the canvas while Priya is typing somewhere else.
+  let focusId = null, focusTimer = null, lastScrolledFocus = null;
+
+  // Also view-only, and also deliberately NOT in `state`: validity is derived, so
+  // this map is one render pass's own copy of validate().errors, rebuilt at the top
+  // of render() and read by fieldEl as it builds each wrapper. Nothing writes it
+  // back anywhere.
+  let errNow = new Map();
+
+  // Third of the view-only trio, and MODULE-LEVEL for the same reason focusId is:
+  // the confirmation card is a receipt for a gesture, not an answer. Keeping it out
+  // of `state` means get_form cannot observe it, no tool has to reason about it, and
+  // get_form stays byte-identical across a submission. The form stays fully editable
+  // afterwards — and because the receipt describes the answers as they stood, every
+  // mutation in section 2 clears it rather than leaving it to describe a form that
+  // has moved on.
+  let submitted = false;
+
+  function focusField(id) {
+    if (focusTimer) clearTimeout(focusTimer);
+    focusId = id;
+    lastScrolledFocus = null;
+    focusTimer = setTimeout(() => { focusId = null; focusTimer = null; render(); }, 2400);
+  }
+
+  // The pointing gesture, WHOLE: move the canvas to the step that owns the field,
+  // then arm the ring. focus_field is one caller and the Review mirror's links are
+  // the other; when the jump lived inside the tool, a link that called focusField
+  // alone would have ringed a field on a step nobody was looking at. Callers check
+  // the id and its visibility first — this only moves. It does not render: invoke()
+  // does that for the tool, and the link's own handler does it for the mirror.
+  function revealField(id) {
+    const ownerId = id.includes(".") ? id.split(".")[0] : id;
+    const index = state.steps.findIndex((s) => s.fields.some((x) => x.id === ownerId));
+    if (index < 0) return null;   // both callers pre-check today; do not make that a trap
+    state.step = state.steps[index].id;
+    focusField(id);
+    return { step: state.steps[index], index: index + 1 };
+  }
+
+  function render() {
+    // Derived afresh every pass — errors only. `missing` is deliberately absent:
+    // it is reported by validate_form and never painted.
+    errNow = new Map(validate().errors.map((e) => [e.id, e.message]));
+
+    // header counts, over what is visible and answerable right now
+    const vis = [];
+    for (const s of state.steps) for (const f of s.fields) {
+      if (!visible(f)) continue;
+      if (f.type === "repeater") { for (const inst of f.instances) vis.push(...inst); }
+      else vis.push(f);
+    }
+    const done = vis.filter((f) => f.value.trim() !== "");
+    $("c-filled").textContent = done.length;
+    $("c-left").textContent   = vis.length - done.length;
+
+    // progress rail
+    const rail = $("rail"); rail.replaceChildren();
+    state.steps.forEach((s, i) => {
+      const st = stepState(s);
+      const b = el("button", "rail-step");
+      b.type = "button";
+      b.dataset.step = s.id;
+      if (s.id === state.step) b.setAttribute("aria-current", "true");
+      b.append(el("span", "rs-n", String(i + 1)), el("span", "rs-t", s.title), el("span", "rs-chip " + st, st));
+      b.onclick = () => { state.step = s.id; render(); };
+      rail.appendChild(b);
+    });
+
+    // canvas: the current step only
+    const idx = state.steps.findIndex((s) => s.id === state.step);
+    const cur = state.steps[idx];
+    $("step-h").textContent = cur.title;
+    $("page-t").textContent = "step " + (idx + 1) + " of " + state.steps.length;
+
+    const form = $("form"); form.replaceChildren();
+    const controls = sectionControls(cur);
+    if (controls) form.appendChild(controls);
+    if (cur.id === "review") renderReview(form, cur);
+    else cur.fields.forEach((f) => { if (visible(f)) form.appendChild(fieldEl(f)); });
+
+    // Scrolling happens HERE and nowhere else: fieldEl returns a DETACHED node and a
+    // repeater's sub-fields are appended into a detached box, so scrollIntoView inside
+    // either is a silent no-op. By this line the sheet is in the document. Once per
+    // gesture (lastScrolledFocus), and never behavior:"smooth" — an async scroll would
+    // still be running when the next tool call lands.
+    if (focusId && lastScrolledFocus !== focusId) {
+      const node = form.querySelector('[data-fid="' + focusId + '"]');
+      if (node) {
+        lastScrolledFocus = focusId;
+        node.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    }
+
+    refreshDynamicTool();
+  }
+
+  // Section-level verdicts on the agent's drafts, at the top of the step.
+  // Accept-all covers what the ✓ control could ratify (pending, or uncertain
+  // with a suggested value — a note-only flag has nothing to accept); clear
+  // covers every agent draft, note-only flags included. Buttons only exist
+  // while at least one such field is visible in the step.
+  function sectionControls(step) {
+    const seen = stepAddressable(step).filter(visible);
+    const acceptable = (fs) => fs.filter((f) => f.state === "pending" || (f.state === "uncertain" && f.value !== ""));
+    const clearable  = (fs) => fs.filter((f) => f.state === "pending" || f.state === "uncertain");
+    if (!clearable(seen).length) return null;
+
+    const bar = el("div", "sec-controls");
+    if (acceptable(seen).length) {
+      const b = el("button", "btn sm sec-accept", "Accept all in section");
+      b.type = "button";
+      b.onclick = () => {
+        const targets = acceptable(stepAddressable(step).filter(visible));
+        targets.forEach((f) => acceptField(f, { quiet: true }));
+        log("you", "Accepted " + targets.length + " agent answer" + (targets.length === 1 ? "" : "s") + " in " + step.title);
+        render();
+      };
+      bar.appendChild(b);
+    }
+    const c = el("button", "btn sm sec-clear", "Clear pending in section");
+    c.type = "button";
+    c.onclick = () => {
+      const targets = clearable(stepAddressable(step).filter(visible));
+      targets.forEach(clearField);
+      log("you", "Cleared " + targets.length + " agent draft" + (targets.length === 1 ? "" : "s") + " in " + step.title);
+      render();
+    };
+    bar.appendChild(c);
+    return bar;
+  }
+
+  function fieldEl(f) {
+    if (f.type === "repeater") return repeaterEl(f);
+    // `error` rides ALONGSIDE the provenance class, never instead of it: an
+    // accepted answer that turns out to be invalid is still the agent's draft that
+    // Priya ratified, and the audit trail has to keep saying so.
+    const bad = errNow.get(f.id) || "";
+    const wrap = el("div", "field " + f.state + (bad ? " error" : "") + (f.type === "checkbox" ? " check" : "") + (focusId === f.id ? " focus" : ""));
+    wrap.dataset.fid = f.id;
+
+    if (f.type === "checkbox") {
+      const lab = el("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = f.value === "yes";
+      box.onchange = () => {
+        setField(f, box.checked ? "yes" : "");
+        log("you", (box.checked ? "Checked: " : "Unchecked: ") + f.label);
+        render();
+      };
+      lab.append(box, el("span", null, f.label));
+      if (f.humanOnly) lab.appendChild(el("span", "ho", "human-only"));
+      wrap.appendChild(lab);
+    } else {
+      const lab = el("label");
+      lab.appendChild(el("span", null, f.label));
+      if (f.required) lab.appendChild(el("span", "req", "required"));
+      if (f.humanOnly) lab.appendChild(el("span", "ho", "human-only"));
+      if (f.state === "uncertain") {
+        const q = el("span", "unc", "?");
+        q.title = "The agent flagged this uncertain — its note is below";
+        lab.appendChild(q);
+      }
+      if (f.state === "pending" || (f.state === "uncertain" && f.value !== "")) {
+        const acts = el("span", "pacts");
+        const acc = el("button", "pa acc", "✓");
+        acc.type = "button";
+        acc.title = "Accept the agent's answer";
+        acc.setAttribute("aria-label", "Accept " + f.label);
+        acc.onclick = () => { acceptField(f); render(); };
+        const ed = el("button", "pa ed", "✎");
+        ed.type = "button";
+        ed.title = "Edit it yourself — your keyboard wins";
+        ed.setAttribute("aria-label", "Edit " + f.label);
+        ed.onclick = () => {
+          const inp = wrap.querySelector("input, select, .yn-b");
+          if (inp) inp.focus();
+        };
+        acts.append(acc, ed);
+        lab.appendChild(acts);
+      }
+      wrap.appendChild(lab);
+
+      if (f.type === "yesno") {
+        const seg = el("div", "yn");
+        ["yes", "no"].forEach((v) => {
+          const b = el("button", "yn-b" + (f.value === v ? " on" : ""), v === "yes" ? "Yes" : "No");
+          b.type = "button";
+          b.dataset.v = v;
+          b.onclick = () => {
+            setField(f, v);
+            log("you", "Answered " + f.label.toLowerCase().replace(/\?$/, "") + " — " + v);
+            render();
+          };
+          seg.appendChild(b);
+        });
+        wrap.appendChild(seg);
+      } else if (f.type === "select") {
+        const input = document.createElement("select");
+        input.id = "f-" + f.id;
+        lab.htmlFor = input.id;
+        const zero = document.createElement("option");
+        zero.value = ""; zero.textContent = "Choose…";
+        input.appendChild(zero);
+        (f.options || []).forEach((o) => {
+          const opt = document.createElement("option");
+          opt.value = o; opt.textContent = pretty(o);
+          input.appendChild(opt);
+        });
+        input.value = f.value;
+        input.onchange = () => {
+          setField(f, input.value);
+          log("you", (input.value ? "Filled " : "Cleared ") + f.label.toLowerCase());
+          render();
+        };
+        wrap.appendChild(input);
+      } else {
+        const input = document.createElement("input");
+        input.type = f.type === "date" ? "date" : f.type === "number" ? "number" : "text";
+        input.id = "f-" + f.id;
+        lab.htmlFor = input.id;
+        input.value = f.value;
+        input.onchange = () => {
+          setField(f, input.value);
+          log("you", (input.value.trim() ? "Filled " : "Cleared ") + f.label.toLowerCase());
+          render();
+        };
+        wrap.appendChild(input);
+      }
+    }
+
+    // Only an ERROR gets an inline message. A missing required answer gets none —
+    // ~25 of them are empty at boot, and a sheet of identical "this is required"
+    // lines is noise that hides the two sentences that actually matter.
+    if (bad) wrap.appendChild(el("div", "help err-msg", bad));
+    if (DISCOUNTS[f.id] && f.value === "yes") wrap.appendChild(el("div", "help disc", DISCOUNTS[f.id]));
+    if (f.note) wrap.appendChild(el("div", "help agent-note", f.note));
+    return wrap;
+  }
+
+  function repeaterEl(rep) {
+    const noun = NOUN[rep.id] || "Entry";
+    const wrap = el("div", "field repeater" + (focusId === rep.id ? " focus" : ""));
+    wrap.dataset.fid = rep.id;
+    const lab = el("label");
+    lab.appendChild(el("span", null, rep.label));
+    wrap.appendChild(lab);
+
+    rep.instances.forEach((inst) => {
+      const n = instN(inst);
+      const box = el("div", "rep-inst");
+      const head = el("div", "rep-h");
+      head.appendChild(el("span", "rep-t", noun + " " + n));
+      const rm = el("button", "btn sm rep-rm", "Remove");
+      rm.type = "button";
+      rm.onclick = () => {
+        removeInstance(rep, n);
+        log("you", "Removed " + noun.toLowerCase() + " " + n);
+        render();
+      };
+      head.appendChild(rm);
+      box.appendChild(head);
+      inst.forEach((sf) => box.appendChild(fieldEl(sf)));
+      wrap.appendChild(box);
+    });
+
+    const add = el("button", "btn sm rep-add", "Add " + (rep.instances.length ? "another " : "a ") + noun.toLowerCase());
+    add.type = "button";
+    add.onclick = () => {
+      const n = addInstance(rep);
+      log("you", "Added " + noun.toLowerCase() + " " + n);
+      render();
+    };
+    wrap.appendChild(add);
+    return wrap;
+  }
+
+  // A pill in the mirror is a link, not a legend, so a sentence-long attestation
+  // label has to be cut somewhere; the full text stays on the title.
+  const shortLabel = (s) => (s.length > 44 ? s.slice(0, 42).trimEnd() + "…" : s);
+
+  // Step 6 — the live mirror of review_submission, then the human-only submit.
+  // ONE summary() call feeds the mirror AND the button's disabled state: reading
+  // the buckets twice is exactly how a screen starts contradicting itself, and it
+  // is the same call review_submission makes, so the prose and the page cannot
+  // disagree either.
+  function renderReview(form, cur) {
+    const sum = summary();
+
+    const m = el("div", "mirror");
+    m.append(
+      el("div", "mir-t", "Submission review"),
+      el("div", "mir-b", sum.answerable + " answerable questions are on screen right now — "
+        + "conditional ones come and go as answers change, so that total moves. "
+        + "Every question is counted once, under its state first."));
+
+    const rows = el("div", "mir-rows");
+    BUCKETS.forEach(([key, label]) => {
+      const entries = sum[key];
+      const row = el("div", "mir-row");
+      row.dataset.bucket = key;
+      const body = el("div");
+      body.appendChild(el("span", "mir-l", label));
+      const box = el("div", "mir-fields");
+      entries.forEach((e) => {
+        const link = el("button", "mir-link", shortLabel(e.label));
+        link.type = "button";
+        link.dataset.target = e.id;   // NOT data-fid: that belongs to the field itself
+        link.title = e.label + " (" + e.id + ")" + (e.note ? " — " + e.note : "");
+        link.onclick = () => { revealField(e.id); render(); };
+        box.appendChild(link);
+      });
+      body.appendChild(box);
+      // Only the two buckets that carry a REASON spell it out. Twenty-four
+      // "this is required" lines would bury the two sentences that matter.
+      if (key === "uncertain" || key === "invalid")
+        entries.forEach((e) => { if (e.note) body.appendChild(el("div", "mir-note", e.label + " — " + e.note)); });
+      row.append(el("span", "mir-n", String(entries.length)), body);
+      rows.appendChild(row);
+    });
+    m.appendChild(rows);
+
+    // SPEC's non-goal, kept visible rather than quietly dropped: there is no quote
+    // engine on this page, so the figure is seeded and says so.
+    const prem = el("div", "mir-prem");
+    prem.append(el("b", null, "$18.40 / month"),
+      el("span", null, "illustrative only — a static seeded figure, not a quote"));
+    m.appendChild(prem);
+    form.appendChild(m);
+
+    cur.fields.forEach((f) => { if (visible(f)) form.appendChild(fieldEl(f)); });
+
+    const bar = el("div", "submit-bar");
+    const sb = el("button", "btn primary", "Submit application");
+    sb.id = "submit-b";
+    sb.type = "button";
+    sb.disabled = !sum.canSubmit;
+    sb.onclick = () => {
+      if (!sum.canSubmit) return;   // the gate, not just the attribute
+      submitted = true;
+      log("you", "Submitted the application — " + sum.complete.length
+        + " answers, every one of them yours.");
+      render();
+    };
+    bar.append(sb, el("span", "help", sum.canSubmit
+      ? "Submit is human-only. No tool on this page can press it."
+      : "Submit is human-only, and stays locked while anything is pending, uncertain, invalid or still needed."));
+    form.appendChild(bar);
+
+    if (submitted) {
+      const card = el("div", "confirm-card");
+      card.append(
+        el("div", "cc-t", "Application received"),
+        el("div", "cc-b", "Marlow Mutual has the application under reference MM-4817-RN. "
+          + "An underwriter reviews it within two working days."),
+        el("div", "cc-n", "Nothing left this page — there is no backend, and a reload starts over. "
+          + "Every answer stays editable, and changing one clears this receipt."));
+      form.appendChild(card);
+    }
+  }
+
+  /* ---- activity log ---- */
+  function log(who, msg) {
+    const row = el("div", "log-row " + who);
+    const now = new Date();
+    row.append(
+      el("span", "t", String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0") + ":" + String(now.getSeconds()).padStart(2, "0")),
+      el("span", "who", who === "agent" ? "agent" : "you"),
+      el("span", "msg", msg));
+    const box = $("log");
+    box.insertBefore(row, box.firstChild);
+    while (box.children.length > 60) box.removeChild(box.lastChild);
+  }
+
+  /* ============================================================
+     4. WEBMCP TOOLS
+     Each tool wraps a function the UI already uses. Same code path,
+     same rendering — the agent is just another way in.
+     ============================================================ */
+  const ok  = (text) => ({ text, ok: true });
+  const err = (text) => { throw new Error(text); };
+
+  // `state` and `error` are orthogonal and both are emitted: state says who put the
+  // answer there, error says whether the rules accept it. error is null unless the
+  // answer is COMMITTED and invalid — a pending draft never carries one.
+  const emitField = (f, vis, showIf, errs) => ({
+    id: f.id, label: f.label, type: f.type,
+    options: f.options || (f.type === "yesno" ? ["yes", "no"] : null),
+    value: f.value, state: f.state,
+    error: errs.get(f.id) || null,
+    visible: vis,
+    showIf: showIf || null,
+    required: !!f.required, humanOnly: !!f.humanOnly,
+    note: f.note || "",
+  });
+
+  /* ---- the explanation table behind explain_field ----
+     Keyed on TEMPLATE ids: every top-level field id (the two repeater containers
+     included, since get_form emits them as fields), plus "<repeater>.<sub-field>"
+     for a repeating item's questions — so every claim reads the same explanation
+     and claims.date can never collide with scheduled_items.value. A dotted instance
+     id is folded onto its template key by explainKey().
+
+     ifBlank is the UNDERWRITING consequence, not the validation rule: what the file
+     is priced or refused as when the answer is absent. The validation goal owns the
+     "this field is required" sentence; this table must never become its second
+     source of truth. A field with no entry here is an ERROR, never a generic
+     fallback — see explain_field and the boot-time gap check. */
+  const EXPLAIN = {
+    /* ---- 1. applicant ---- */
+    full_name: {
+      why: "The policy is a contract and a contract needs a named person: whoever appears here is the insured — the one who can file a claim, and the one a payout is written to.",
+      ifBlank: "There is nobody for Marlow Mutual to insure, so the application cannot be rated or bound at all.",
+      typical: "Your full legal name as it reads on your ID — “Priya Raghavan”, not a nickname or initials.",
+    },
+    dob: {
+      why: "Age is a rating factor on renters cover, and it is also how Marlow Mutual confirms you are old enough to hold a contract in your own name.",
+      ifBlank: "The premium cannot be calculated and nobody can confirm you may legally sign, so the quote is withheld.",
+      typical: "An ISO date — 1994-03-14 for someone born on 14 March 1994.",
+    },
+    email: {
+      why: "Everything the policy actually consists of — the declarations page, renewal notices, the claim portal link — is delivered electronically to this address.",
+      ifBlank: "There is no way to send the documents that make the cover provable, so the policy cannot be issued.",
+      typical: "The mailbox you genuinely read, such as priya@example.com. A work address you may lose access to is the common regret here.",
+    },
+    phone: {
+      why: "A claims adjuster telephones before they write, and so does an underwriter with one open question — which is often all that stands between a referred file and a bound policy.",
+      ifBlank: "Every query on the file has to travel by email instead, which routinely adds days to both underwriting and a claim.",
+      typical: "A mobile number with its area code, such as 503-555-0142.",
+    },
+    current_address: {
+      why: "It anchors the identity and prior-loss checks, and it tells the underwriter whether what is being quoted is a move or a renewal in place.",
+      ifBlank: "Identity and claims-history searches cannot be run, and the file goes to manual review instead of quoting.",
+      typical: "Street, city and state as the post office has them — “12 Ash St, Portland OR”.",
+    },
+    time_at_address: {
+      why: "Residential stability is a rating signal in its own right, and under two years the insurer needs the earlier address to complete a five-year loss history.",
+      ifBlank: "The five-year history has a hole in it, and Marlow Mutual prices an unknown gap as though it were adverse.",
+      typical: "“2 years or more” if you have not moved since 2024; otherwise “Less than 2 years”.",
+    },
+    prev_address: {
+      why: "It closes the gap in your loss history: claims follow an address as much as a person, so a five-year search needs every address you lived at.",
+      ifBlank: "The loss search comes back incomplete, which is treated as an unverified history and usually costs the claims-free discount.",
+      typical: "The full previous address with city and state, such as “9 Larch Ave, Eugene OR”.",
+    },
+    co_applicant: {
+      why: "Only a named insured can file a claim. This answer decides whether the person you live with is covered by the policy or merely present in the flat.",
+      ifBlank: "The policy defaults to you alone, and a partner's belongings and liability sit outside the cover — usually undiscovered until a claim.",
+      typical: "“Yes” if a partner or joint tenant should be able to claim on this policy; “No” for a roommate carrying their own.",
+    },
+    co_name: {
+      why: "The co-applicant becomes a second named insured, so their legal name has to appear on the contract exactly as yours does.",
+      ifBlank: "There is no second insured to add, and the policy is issued in your name only whatever the question above says.",
+      typical: "The co-applicant's full legal name, such as “Sam Okonkwo”.",
+    },
+    co_dob: {
+      why: "The co-applicant is rated too: their age feeds the same premium calculation, and it confirms they can hold a contract.",
+      ifBlank: "The co-applicant cannot be rated, and the underwriter drops them from the policy rather than guess.",
+      typical: "An ISO date, such as 1992-11-02.",
+    },
+    co_phone: {
+      why: "It gives the adjuster a second way to reach the household — which matters when the claim is that the flat has burnt and one of the phones was inside it.",
+      ifBlank: "Nothing stops the policy; every call simply goes to you, including the ones about the co-applicant's own loss.",
+      typical: "A mobile number with area code, such as 503-555-0175. This one is genuinely optional.",
+    },
+
+    /* ---- 2. building ---- */
+    new_address: {
+      why: "This is the address the policy covers. Rating pulls the local fire protection, crime and weather exposure from it, so it moves the premium more than any other single answer.",
+      ifBlank: "There is no risk location to rate and no quote can be produced.",
+      typical: "The full street address you are moving to, such as “48 Alder Court, Portland OR”.",
+    },
+    unit: {
+      why: "In a multi-unit building the unit number is what separates your four walls from your neighbour's at claim time, and it is how the policy documents reach the right door.",
+      ifBlank: "Nothing blocks the quote, but a claim in a large building can stall while the adjuster works out which flat was yours.",
+      typical: "The unit designator on your lease — “3B”. Leave it empty for a whole house.",
+    },
+    building_type: {
+      why: "A condo, a house and an apartment leave completely different gaps between the landlord's or association's policy and yours; this answer decides which gaps your cover has to fill.",
+      ifBlank: "Marlow Mutual cannot tell what structural cover already exists, so the file is referred rather than quoted.",
+      typical: "“Apartment” for a rented flat in a walk-up; “Condo” if the unit is individually owned.",
+    },
+    hoa_master_policy: {
+      why: "A condo association's master policy may already cover the walls, floors and fixtures — or only the bare studs. Whichever it is decides how much building property your own policy must carry.",
+      ifBlank: "The underwriter assumes the narrowest master policy and prices your unit as though nothing structural were covered.",
+      typical: "“Yes” for almost every condo association. Ask the board rather than guessing if you are not sure.",
+    },
+    year_built: {
+      why: "Age is the proxy for the wiring, plumbing and roof behind the walls — the systems that cause the water and fire losses renters actually suffer. It is one of the strongest rating factors on the form.",
+      ifBlank: "The building is rated as being of unknown vintage, which is priced at the older end of the book, and any age-based credit is lost.",
+      typical: "A four-digit year, such as 1962. The lease, the listing or the county assessor's record will have it.",
+    },
+    floor: {
+      why: "Height above ground changes the exposure: ground floors take water and burglary, top floors take roof and wind, and above the third floor the fire service's reach starts to matter.",
+      ifBlank: "The exposure is rated at the worst plausible case for the building, and the premium reflects that.",
+      typical: "A whole number — 3 for a third-floor flat, 1 for street level.",
+    },
+    construction_class: {
+      why: "What the walls are made of decides how a fire spreads and how much of your property survives it. Masonry and brick rate materially better than frame.",
+      ifBlank: "The building is assumed to be frame — the most expensive class — until documentation says otherwise.",
+      typical: "“Brick” for an older masonry walk-up, “Frame” for timber construction. The listing or the lease usually says which.",
+    },
+    smoke_detectors: {
+      why: "Working detectors cut the average fire loss enough that every carrier prices for them, and answering yes earns the protective-device discount.",
+      ifBlank: "The discount is not applied and the flat is rated as unprotected.",
+      typical: "“Yes” — they are required in rental housing almost everywhere. Check the batteries before you answer.",
+    },
+    sprinklers: {
+      why: "A sprinkler head puts out a kitchen fire before the fire service arrives, which is the largest single reduction in expected fire loss available on this page.",
+      ifBlank: "No sprinkler credit is applied. Nothing else about the quote changes.",
+      typical: "“No” for most older walk-ups; “Yes” only if there are heads inside your own unit, not merely in the corridor.",
+    },
+    security_system: {
+      why: "A monitored alarm reduces both how often theft claims happen and how large they are, so it is a rated discount rather than a courtesy.",
+      ifBlank: "The security credit is not applied and theft is rated at the unprotected level.",
+      typical: "“Yes” for a monitored alarm or a building entry system; “No” for a doorbell camera on its own.",
+    },
+    dog: {
+      why: "Most renters liability claims that reach a courtroom are dog bites. Whether a dog lives in the flat is the liability question on this page.",
+      ifBlank: "An undisclosed dog is grounds to deny a bite claim later, so a blank here reads as a material omission rather than an oversight.",
+      typical: "“Yes” if a dog lives with you at all — a foster or a partner's dog counts.",
+    },
+    dog_breed: {
+      why: "Breed drives the liability load, and a few breeds sit outside what Marlow Mutual will write at all. That decision has to be made now, not after a bite.",
+      ifBlank: "Liability cover for animal injury is excluded rather than priced, which leaves the dog effectively uninsured.",
+      typical: "The breed as your vet records it, such as “Beagle”. “Mixed — mostly labrador” is a perfectly good answer.",
+    },
+    dog_bite_history: {
+      why: "A dog that has bitten once is rated and often excluded, because prior aggression is the best predictor there is of the next claim.",
+      ifBlank: "The underwriter cannot assume a clean record, so animal liability is referred and usually held back pending the vet's or shelter's file.",
+      typical: "“No” for a dog with no incident on record. Answer “Yes” honestly if there was one, even where no claim was ever made.",
+    },
+
+    /* ---- 3. coverage ---- */
+    personal_property_limit: {
+      why: "This is the ceiling on what Marlow Mutual pays for your belongings, so it is the number that decides whether a total loss makes you whole or leaves you short.",
+      ifBlank: "No quote can be produced — this limit is the thing being priced.",
+      typical: "Add up the furniture, clothes, electronics and kitchen; most one-bedroom flats land near $30,000, and people underestimate by roughly half.",
+    },
+    liability_limit: {
+      why: "It covers what you owe someone else — a guest injured in your flat, a bath that floods the unit below — including the legal defence, which is frequently the larger half of the bill.",
+      ifBlank: "You are bound at the bare minimum, so a single serious injury claim runs past the limit and you pay the balance yourself.",
+      typical: "$300,000 is the common choice; $100,000 is the floor most leases will accept.",
+    },
+    deductible: {
+      why: "It is the share of every loss you keep. Raising it lowers the premium; the real question is what you could actually pay on the day of a fire.",
+      ifBlank: "The premium cannot be calculated, since the deductible is one of its inputs.",
+      typical: "$500 is the usual balance. Take $1,000 only if that much is genuinely sitting in savings.",
+    },
+    cost_basis: {
+      why: "Replacement cost pays what a new one costs today; actual cash value pays what your old one was worth after depreciation. On a five-year-old laptop that is roughly half the cheque.",
+      ifBlank: "The policy falls back to actual cash value — the cheaper premium, and by far the worse claim.",
+      typical: "“Replacement cost” for almost everyone: the premium difference is small next to the claim difference.",
+    },
+    high_value_items: {
+      why: "Ordinary contents cover caps single items — jewellery, bikes, instruments, cameras — at a couple of thousand dollars whatever the overall limit says. This answer opens the schedule that lifts that cap.",
+      ifBlank: "Any expensive single thing is settled at the internal sub-limit, which for a $2,400 bike is usually a fraction of its value.",
+      typical: "“Yes” if any one thing you own would cost more than $2,000 to replace — a road bike, a wedding ring, a camera body.",
+    },
+    scheduled_items: {
+      why: "Each item listed here is insured for its own agreed amount instead of the blanket sub-limit, which is the only way an expensive single thing ends up fully covered.",
+      ifBlank: "An empty schedule means every valuable falls back to the sub-limit, however large the blanket contents limit is.",
+      typical: "One row per item worth more than $2,000. Most households have between one and three.",
+    },
+    "scheduled_items.description": {
+      why: "The description is what identifies the item at claim time, so the adjuster settles the thing you actually insured rather than a category it resembles.",
+      ifBlank: "The item cannot be scheduled and drops back to the blanket sub-limit with everything else.",
+      typical: "Make, model and enough detail to tell it apart — “Trek Domane road bike, 2021”.",
+    },
+    "scheduled_items.value": {
+      why: "The scheduled amount is both what the item is insured for and what its share of the premium is charged on. It is an agreed figure, not an estimate revisited later.",
+      ifBlank: "There is no agreed amount, so the schedule row is dropped and the item reverts to the sub-limit.",
+      typical: "Replacement cost today rather than what you paid — a whole number such as 2400.",
+    },
+    "scheduled_items.appraisal": {
+      why: "A written appraisal is what stops a disputed valuation at claim time; without one the carrier can insist you prove the value after the item is already gone.",
+      ifBlank: "The item is still scheduled, but a large claim on it can be slowed while value is established from receipts and photographs.",
+      typical: "“No” is normal for a bike or a laptop. Jewellery over about $5,000 usually needs “Yes”.",
+    },
+
+    /* ---- 4. history ---- */
+    claims_5y: {
+      why: "Prior claims are the strongest single predictor of the next one, and Marlow Mutual will see them in the industry loss database whatever you answer here.",
+      ifBlank: "The claims database is searched either way, so a blank here only delays the quote — and a later mismatch reads as concealment.",
+      typical: "“Yes” if you have made any claim on any property policy since 2021, however small and however long ago it settled.",
+    },
+    claims: {
+      why: "Each prior loss is rated on its own facts — what happened, when, how much, and whether it is closed — so one old water claim is not priced as though it were a pattern.",
+      ifBlank: "With the controlling question answered yes and no claims listed, the file carries a contradiction and is referred.",
+      typical: "One row per claim in the last five years. Most applicants who answer yes have exactly one.",
+    },
+    "claims.date": {
+      why: "Recency is most of a claim's weight: a loss from four years ago barely moves the premium, while one from four months ago can decide whether cover is offered at all.",
+      ifBlank: "The claim is rated as though it were recent, which is the worst assumption available.",
+      typical: "An ISO date for the day of loss — 2024-03-14.",
+    },
+    "claims.type": {
+      why: "The cause of loss decides what the claim predicts. Water damage suggests plumbing that will fail again, theft suggests the neighbourhood, and the two are rated nothing alike.",
+      ifBlank: "The loss is rated at the most severe cause plausible for the amount claimed.",
+      typical: "“Water damage” for a burst pipe or an overflow. Pick the closest cause rather than reaching for “Other”.",
+    },
+    "claims.amount": {
+      why: "Severity is rated separately from frequency: a string of small claims and one large one tell an underwriter quite different things about the same address.",
+      ifBlank: "The claim is treated as severe until the loss database says otherwise, and that lookup delays the quote.",
+      typical: "The amount paid out, in whole dollars — 1800.",
+    },
+    "claims.at_current_address": {
+      why: "A loss at the property you still live in may be an unrepaired condition rather than history, and that is a live exposure Marlow Mutual has to look at.",
+      ifBlank: "The loss is assumed to be at the risk location, which can push the file into a physical inspection before it can be bound.",
+      typical: "“No” if the claim happened at a previous address you have since left.",
+    },
+    "claims.resolved": {
+      why: "An open claim is a liability that is still moving. Marlow Mutual cannot write over the top of a loss that has not been settled and closed.",
+      ifBlank: "The claim is treated as open, and cover for that peril is usually held back until it closes.",
+      typical: "“Yes” once the payout was made and the file closed — true of almost every claim over a year old.",
+    },
+    cancelled: {
+      why: "A cancellation or non-renewal is an underwriting verdict another carrier already reached about you, which is why every insurer asks about it.",
+      ifBlank: "The declination history is looked up anyway; a blank where a cancellation exists is treated as a material misstatement and can void the policy later.",
+      typical: "“No” for most applicants. Note that non-payment counts, and so does a policy the insurer simply chose not to renew.",
+    },
+    cancelled_explanation: {
+      why: "The reason is what separates a missed direct debit from a fraud investigation. Without it the underwriter only knows that some carrier said no.",
+      ifBlank: "The cancellation stands unexplained, and an unexplained one is declined far more often than an explained one.",
+      typical: "One or two plain sentences — “Policy lapsed in 2022 after a card expired; reinstated the same month.”",
+    },
+
+    /* ---- 5. disclosures ---- */
+    business_use: {
+      why: "A renters policy covers a home, not a workplace: stock, client visits and business equipment are excluded by default, and this answer is where an exception gets written in.",
+      ifBlank: "Business property and business liability losses are simply excluded, and the exclusion surfaces at claim time.",
+      typical: "“No” for ordinary remote work at a laptop; “Yes” if clients come to the flat or you hold stock there.",
+    },
+    wood_stove: {
+      why: "Wood and pellet stoves are the largest cause of residential fires after cooking, and most carriers want the installation and its clearances confirmed before they will write the risk.",
+      ifBlank: "An undisclosed stove is grounds to deny a fire claim, so the underwriter treats the blank as a risk it has not accepted.",
+      typical: "“No” for a flat on central heating; “Yes” for any solid-fuel stove, even one that is never lit.",
+    },
+    trampoline_pool: {
+      why: "Both are what the industry calls attractive nuisances: they draw children in and generate injury claims against your liability cover far out of proportion to what they cost.",
+      ifBlank: "Liability for injuries around either one is excluded rather than rated — which is the entire reason the question is asked.",
+      typical: "“No” for almost every rented flat. “Yes” includes a shared pool you have the right to use.",
+    },
+    aggressive_animal: {
+      why: "This is a sworn statement rather than a rating question: an official dangerous-animal designation is uninsurable, and Marlow Mutual needs your own attestation on the record before it writes any animal liability.",
+      ifBlank: "The application cannot be submitted — an unsigned attestation leaves the policy without a representation it is issued on.",
+      typical: "Tick it if no authority has ever declared an animal of yours dangerous. Only you can: the agent is refused this field.",
+    },
+    fraud_ack: {
+      why: "Insurance fraud is a criminal offence in most states, and the law requires this warning to be shown and acknowledged before an application may be accepted.",
+      ifBlank: "The application cannot be submitted at all: the acknowledgement is a statutory precondition, not a preference.",
+      typical: "Read it, then tick it. Like the attestation above it is human-only, and the agent cannot tick it for you.",
+    },
+
+    /* ---- 6. review ---- */
+    confirm_accuracy: {
+      why: "The whole application is a set of representations, and this is the moment you adopt them as your own — including every answer the agent drafted and you accepted.",
+      ifBlank: "Submit stays locked. Nothing reaches the underwriter until a person confirms the answers are theirs.",
+      typical: "Tick it only after reading the review page. It is human-only by design: the agent may draft, but it cannot swear.",
+    },
+  };
+
+  // A dotted instance id is explained from its template: claims.1.date -> claims.date.
+  // No schema id contains a dot of its own, so the fold is unambiguous.
+  const explainKey = (id) => id.replace(/\.\d+\./, ".");
+
+  // Operator signal, not a runtime guard. A field added without an explanation — or a
+  // stale key left behind after one is removed — says so in the activity feed the
+  // moment the page boots, rather than the first time an agent asks about it.
+  function explainGaps() {
+    const ids = new Set(state.steps.flatMap((s) => s.fields.flatMap((f) =>
+      f.type === "repeater" ? [f.id, ...f.template.map((t) => f.id + "." + t.id)] : [f.id])));
+    const missing = [...ids].filter((id) => !(id in EXPLAIN));
+    const orphan = Object.keys(EXPLAIN).filter((k) => !ids.has(k));
+    if (missing.length || orphan.length)
+      log("you", "explain_field table is out of step — missing: " + (missing.join(", ") || "none")
+        + "; orphaned: " + (orphan.join(", ") || "none"));
+  }
+
+  const TOOLS = [
+    {
+      name: "get_form",
+      description: "Read the whole application as one JSON document: six steps, and for every field its id, label, type, options, current value, state, error, whether it is required or human-only, and visible — true only when its showIf condition is currently satisfied. state is PROVENANCE, who put the answer there: empty, human, pending, agent-accepted or uncertain. error is separate and derived: the validation message when a COMMITTED answer (human or agent-accepted) breaks a rule, and null otherwise — so a value you have merely drafted is never reported as an error, however wrong it looks. Required answers that are simply still empty are not errors either; call validate_form for those. Hidden conditional fields are listed anyway, with the showIf that reveals them, and repeater instances appear as their own addressable sub-fields with dotted ids such as claims.1.date. Per-step completion is under stepStates. Call it first, and again after any answer that could change visibility. It does not change anything, and it does not explain why a question is asked.",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: true },
+      execute: () => {
+        const errs = new Map(validate().errors.map((e) => [e.id, e.message]));
+        const steps = state.steps.map((s) => {
+          const fields = [];
+          for (const f of s.fields) {
+            const vis = visible(f);
+            fields.push(emitField(f, vis, f.showIf, errs));
+            if (f.type === "repeater") {
+              for (const inst of f.instances) for (const sf of inst) fields.push(emitField(sf, vis, f.showIf, errs));
+            }
+          }
+          return { id: s.id, title: s.title, fields };
+        });
+        const stepStates = {};
+        for (const s of state.steps) stepStates[s.id] = stepState(s);
+        return JSON.stringify({ form: state.form, steps, stepStates }, null, 2);
+      },
+    },
+    {
+      name: "fill_field",
+      description: "Draft one answer into the form on Priya's behalf. It commits nothing: the value lands in the pending layer — highlighted in the form with accept and edit controls — and counts only once Priya accepts it; she can also rewrite it inline, which makes the field her own answer. When the brief leaves you unsure, pass note: note alone flags the field uncertain and leaves its value untouched; note plus a value records that value as an uncertain suggestion under the same flag. Refuses, changing nothing, when: the field id is unknown (ids are exact — call get_form first), the field is hidden by an unanswered condition (the error names the controlling question and the answer that reveals it), the field is a human-only attestation, Priya already typed or accepted an answer there (ask her instead of overwriting), the value does not match the field's options or type (listed options, yes/no, number, YYYY-MM-DD date), or the id names a whole repeater instead of one of its numbered sub-fields such as claims.1.date.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          field_id: { type: "string", description: "Exact field id from get_form — such as full_name, or claims.1.date for a repeater sub-field. Labels are not accepted." },
+          value: { type: "string", description: "The answer to draft. Selects and yes/no fields take one of their listed options, dates are YYYY-MM-DD. Omit it to flag the field with note alone." },
+          note: { type: "string", description: "A short reason you are unsure — marks the field uncertain and shows the note to Priya next to it." },
+        },
+        required: ["field_id"],
+      },
+      sampleArgs: { field_id: "full_name", value: "Priya Raghavan" },
+      execute: (args) => {
+        const a = args || {};
+        if (typeof a.field_id !== "string" || !a.field_id.trim())
+          err("fill_field needs field_id — an exact id from get_form"
+            + ("field" in a ? " (the argument was renamed from field to field_id)" : "") + ".");
+        const f = addressable().find((x) => x.id === a.field_id.trim());
+        if (!f) err("No field with id \"" + a.field_id + "\". Ids are exact — call get_form for the full list.");
+        const value = a.value == null ? "" : String(a.value);
+        const note = a.note == null ? "" : String(a.note).trim();
+        if (!value.trim() && !note) err("Nothing to write — pass value, note, or both.");
+        const res = agentWrite(f, value, note);
+        if (!res.ok) err(res.reason);
+        if (note && !value.trim()) return ok("Flagged " + f.label + " (" + f.id + ") as uncertain — " + note);
+        if (note) return ok("Suggested \"" + value + "\" for " + f.label + " (" + f.id + ") — uncertain: " + note);
+        return ok("Filled " + f.label + " (" + f.id + ") with \"" + value + "\" — pending until Priya accepts.");
+      },
+    },
+    {
+      name: "fill_section",
+      description: "Draft several answers into one section (step) of the form in a single call, on Priya's behalf. values maps exact field ids from get_form to answers; notes maps field ids to a short reason you are unsure. A field id in both gets its value recorded as an uncertain suggestion; a field id in notes alone is flagged uncertain with no value written. Every write lands in the pending layer exactly as fill_field would leave it: this tool commits nothing and cannot accept anything — only Priya can. Partial success is normal and reported, never silent: the reply opens with a count recap, then one line per entry — \"set pending: <id>\" or \"skipped <id> — <reason>\" (belongs to a different section, hidden by an unanswered condition, human-only attestation, already answered or accepted by Priya, or a value that does not match the field's options or type). A skipped entry never stops the rest of the batch. Refuses only when section_id itself is unknown (the error lists the section ids) or when values and notes are both empty.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          section_id: { type: "string", description: "Exact section id from get_form: applicant, building, coverage, history, disclosures, or review." },
+          values: { type: "object", description: "Map of exact field id → answer to draft, e.g. {\"cost_basis\": \"replacement_cost\"}. Selects and yes/no fields take one of their listed options, dates are YYYY-MM-DD." },
+          notes: { type: "object", description: "Map of field id → a short reason you are unsure. With a value in values the field becomes an uncertain suggestion; alone it flags the field uncertain and writes nothing." },
+        },
+        required: ["section_id"],
+      },
+      sampleArgs: { section_id: "coverage", values: { cost_basis: "replacement_cost" }, notes: { liability_limit: "brief doesn't say" } },
+      execute: (args) => {
+        const a = args || {};
+        const sectionIds = state.steps.map((s) => s.id).join(", ");
+        const sid = a.section_id == null ? "" : String(a.section_id).trim().toLowerCase();
+        if (!sid) err("fill_section needs section_id — one of " + sectionIds + ".");
+        const step = state.steps.find((s) => s.id === sid);
+        if (!step) err("No section with id \"" + a.section_id + "\" — sections are " + sectionIds + ".");
+        const values = (a.values && typeof a.values === "object") ? a.values : {};
+        const notes  = (a.notes  && typeof a.notes  === "object") ? a.notes  : {};
+        const ids = Object.keys(values);
+        for (const k of Object.keys(notes)) if (!(k in values)) ids.push(k);
+        if (!ids.length) err("Nothing to write — pass values, notes, or both.");
+
+        const inStep = stepAddressable(step);
+        const lines = [];
+        let set = 0, flagged = 0;
+        for (const id of ids) {
+          const f = inStep.find((x) => x.id === id);
+          if (!f) {
+            lines.push("skipped " + id + " — " + (addressable().some((x) => x.id === id)
+              ? "not in this step (" + step.id + ")" : "unknown field id"));
+            continue;
+          }
+          const value = values[id] == null ? "" : String(values[id]);
+          const note = notes[id] == null ? "" : String(notes[id]).trim();
+          if (!value.trim() && !note) { lines.push("skipped " + id + " — no value or note given"); continue; }
+          const res = agentWrite(f, value, note);
+          if (!res.ok) { lines.push("skipped " + id + " — " + res.reason); continue; }
+          if (note && !value.trim()) { flagged++; lines.push("flagged uncertain: " + id + " — " + note); }
+          else { set++; lines.push("set pending: " + id + (note ? " (uncertain: " + note + ")" : "")); }
+        }
+        const skipped = ids.length - set - flagged;
+        return ok(step.title + " (" + step.id + "): " + set + " set pending, " + flagged
+          + " flagged uncertain, " + skipped + " skipped — nothing counts until Priya accepts.\n"
+          + lines.join("\n"));
+      },
+    },
+    {
+      name: "add_repeater_item",
+      description: "Add one new item to a repeating list — claims (Prior claims & history) or scheduled_items (Coverage) — and optionally draft its fields in the same call. values maps the item's own field ids (for claims: date, type, amount, at_current_address, resolved; for scheduled_items: description, value, appraisal) to answers; each draft lands pending, exactly as fill_field would write it, committed only when Priya accepts. The reply names the new item's dotted field ids, such as claims.2.amount, so fill_field can amend any of them, then one \"set pending\" or \"skipped … — <reason>\" line per value — a bad value skips that field, never the item. Refuses, creating nothing, when the repeater id is unknown or the list is hidden because its controlling question is not answered yes (the refusal names that question). It cannot remove items — removal is Priya's Remove button — and it cannot accept anything.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          repeater_id: { type: "string", description: "Which list to extend: claims or scheduled_items." },
+          values: { type: "object", description: "Map of the item's field id → answer to draft into the new item, e.g. {\"amount\": \"1800\"}. Optional — omit to create an empty item." },
+        },
+        required: ["repeater_id"],
+      },
+      sampleArgs: { repeater_id: "claims", values: { date: "2024-03-14", type: "water_damage", amount: "1800", at_current_address: "no", resolved: "yes" } },
+      execute: (args) => {
+        const a = args || {};
+        const reps = addressable().filter((f) => f.type === "repeater");
+        const rid = a.repeater_id == null ? "" : String(a.repeater_id).trim().toLowerCase();
+        const rep = reps.find((r) => r.id === rid);
+        if (!rep) err("No repeater with id \"" + (a.repeater_id == null ? "" : a.repeater_id)
+          + "\" — repeaters are " + reps.map((r) => r.id).join(", ") + ".");
+        if (!visible(rep))
+          err(hiddenReason(rep));
+
+        const n = addInstance(rep);
+        const inst = rep.instances.find((i) => instN(i) === n);
+        const badValues = a.values != null && (typeof a.values !== "object" || Array.isArray(a.values));
+        const values = (!badValues && a.values) ? a.values : {};
+        const lines = [];
+        if (badValues) lines.push("skipped all values — values must be an object map of field id to answer");
+        for (const key of Object.keys(values)) {
+          const sf = inst.find((x) => x.id === rep.id + "." + n + "." + key);
+          if (!sf) {
+            lines.push("skipped " + key + " — not a field of this item (fields: "
+              + rep.template.map((t) => t.id).join(", ") + ")");
+            continue;
+          }
+          const value = values[key] == null ? "" : String(values[key]);
+          if (!value.trim()) { lines.push("skipped " + sf.id + " — no value given"); continue; }
+          const res = agentWrite(sf, value, "");
+          if (!res.ok) { lines.push("skipped " + sf.id + " — " + res.reason); continue; }
+          lines.push("set pending: " + sf.id);
+        }
+        return ok("Created " + rep.id + "." + n + " — fields: " + inst.map((sf) => sf.id).join(", ")
+          + (lines.length ? "\n" + lines.join("\n") : ""));
+      },
+    },
+    // The reads are appended AFTER the writes on purpose: TOOLS[0] must stay
+    // get_form, because the harness executes the first readOnlyHint tool with "{}"
+    // and focus_field / explain_field would throw on the missing field_id.
+    // validate_form and review_submission have no required argument and so are safe
+    // either way — they still go last, so the console lists the tools in the order an
+    // agent uses them, ending where the application itself ends.
+    {
+      name: "focus_field",
+      description: "Point at one field on Priya's screen: the form jumps to the step that holds it, the field is scrolled into view and ringed, so the two of you are looking at the same question. Use it whenever you would say “this one” — before asking her about a field, or alongside explain_field while walking her through the form. It changes no answer: nothing is written, accepted or cleared, and the ring fades by itself after a couple of seconds. It also does not read the field back to you — call get_form for the value and state, or explain_field for what the question means. Whole repeating lists can be pointed at too (claims, scheduled_items), as can one item's sub-field by its dotted id. Refuses, moving nothing, when the id is unknown (ids are exact — call get_form first) or when the field is hidden by an unanswered condition, in which case the error names the controlling question and the answer that reveals it.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          field_id: { type: "string", description: "Exact field id from get_form — such as year_built, claims for the whole list, or claims.1.date for one item's question. Labels are not accepted." },
+        },
+        required: ["field_id"],
+      },
+      annotations: { readOnlyHint: true },
+      sampleArgs: { field_id: "year_built" },
+      execute: (args) => {
+        const a = args || {};
+        const id = a.field_id == null ? "" : String(a.field_id).trim();
+        if (!id) err("focus_field needs field_id — an exact id from get_form.");
+        const f = addressable().find((x) => x.id === id);
+        if (!f) err("No field with id \"" + id + "\". Ids are exact — call get_form for the full list.");
+        // Every refusal runs before state.step moves or the ring is armed.
+        if (!visible(f)) err(hiddenReason(f));
+        const at = revealField(f.id);
+        return ok("Showing " + f.label + " (" + f.id + ") on step " + at.index + " — " + at.step.title + ".");
+      },
+    },
+    {
+      name: "explain_field",
+      description: "Explain one question in plain language: why Marlow Mutual asks it, what it costs the application to leave it blank, and what a typical answer looks like — read from an explanation table written into this page, never invented. Use it when Priya asks “why do they want this?” or stalls on a field, and pair it with focus_field so she can see which question you mean. Every field has an entry, hidden conditionals included: explaining why a question exists is exactly what helps someone decide the answer that reveals it. A repeating item's sub-field is explained from its template, so claims.1.date and claims.2.date read the same. The reply also states whether the field is required and what is in it right now. It answers nothing on Priya's behalf and writes nothing: it cannot fill, accept or clear a field, and it does not check whether the current answer is valid.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          field_id: { type: "string", description: "Exact field id from get_form — such as year_built, or claims.1.date for one item's question. Labels are not accepted." },
+        },
+        required: ["field_id"],
+      },
+      annotations: { readOnlyHint: true },
+      sampleArgs: { field_id: "year_built" },
+      execute: (args) => {
+        const a = args || {};
+        const id = a.field_id == null ? "" : String(a.field_id).trim();
+        if (!id) err("explain_field needs field_id — an exact id from get_form.");
+        const f = addressable().find((x) => x.id === id);
+        if (!f) err("No field with id \"" + id + "\". Ids are exact — call get_form for the full list.");
+        const e = EXPLAIN[explainKey(f.id)];
+        if (!e) err("No explanation is written for " + f.id + " in this form's table — that is a gap in the page, not in your call. Tell Priya to ask Marlow Mutual about this one directly.");
+        const status = (f.required ? "Required" : "Optional")
+          + (visible(f) ? "" : ", hidden right now")
+          + " — " + (f.value.trim() ? "currently \"" + f.value + "\" (" + f.state + ")" : "still empty");
+        return ok(f.label + " (" + f.id + ")\n" + status
+          + "\nWhy it is asked: " + e.why
+          + "\nIf left blank: " + e.ifBlank
+          + "\nTypical answer: " + e.typical);
+      },
+    },
+    {
+      name: "validate_form",
+      description: "Check the application against its own rules and report what is wrong, what is still missing, and what is merely worth a second look — the whole form, or one step if you pass step. It returns THREE buckets and the difference between them is the point. errors are answers Priya has COMMITTED — typed herself, or accepted from you — that break a rule: a malformed email, a date of birth in the future, a year built outside 1800 to now, a scheduled value of zero. Nothing you have merely drafted is ever an error: a pending or uncertain write is not committed, so there is nothing yet to be wrong, and this tool will not flag it — draft freely and let Priya decide. missing lists every visible required field that is still empty, whatever its state, each with the reason it is required right now, which for a conditional field names the earlier answer that made it required. A field you flagged uncertain and left blank is missing, not an error: an honest \"I don't know\" is not a mistake. warnings are advisory only — a scheduled item under the $2,000 threshold, or a repeating list its own controlling answer says should have rows in it — and nothing there blocks anything. Every entry carries the field id, its label, its step, a kind, and a message written as a RULE, what a valid answer looks like; call explain_field for why the question is asked at all. It fixes nothing, writes nothing and blocks nothing: only the form itself decides whether Priya may submit, and only Priya may.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          step: { type: "string", description: "Optional step id to scope the check to: applicant, building, coverage, history, disclosures, or review. Omit it to check the whole form." },
+        },
+      },
+      annotations: { readOnlyHint: true },
+      execute: (args) => {
+        const a = args || {};
+        const stepIds = state.steps.map((s) => s.id).join(", ");
+        const sid = a.step == null ? "" : String(a.step).trim().toLowerCase();
+        let scope = null;
+        if (sid) {
+          scope = state.steps.find((s) => s.id === sid);
+          if (!scope) err("No step with id \"" + a.step + "\" — steps are " + stepIds + ".");
+        }
+        const v = validate(scope);
+        return JSON.stringify({
+          scope: scope ? scope.id : "whole form",
+          counts: { errors: v.errors.length, missing: v.missing.length, warnings: v.warnings.length },
+          // The head line #13's review_submission reads. The three buckets are disjoint;
+          // what overlaps is a field's STATE with `missing` (an uncertain field left blank
+          // is in both), so a prose summary must pick one home per field or double-count.
+          note: "errors are committed answers that break a rule; a pending or uncertain draft is never one. missing is every visible required field still empty whatever its state, so a field flagged uncertain and left blank appears there too — report any field under its STATE first (pending, then uncertain, then missing) to keep a summary's counts exclusive.",
+          errors: v.errors, missing: v.missing, warnings: v.warnings,
+        }, null, 2);
+      },
+    },
+    {
+      name: "review_submission",
+      description: "Read the whole application back to Priya in prose, the way you would before she signs: how many of its answerable questions are complete, which are still waiting on her review, which you flagged uncertain and the reason you gave, which committed answers break a rule, and which required questions are still empty — then an explicit verdict on whether she can submit yet. Counts are anchored to the number of ANSWERABLE questions visible right now rather than to a fixed total, because conditional questions appear and disappear as answers change, and because an optional question left blank belongs to no bucket at all — so the buckets never add up to the total, by design. Every question is counted ONCE, under its state first: one you flagged uncertain and left empty is reported as uncertain, not as missing. Advisory warnings are validate_form's business and block nothing, so they are not here. Call it after a batch of drafts, and again once Priya has accepted them. It changes nothing. IT DOES NOT SUBMIT the application — and neither does anything else you can call: this page registers no submit tool at all. Submitting is a button only Priya can press, and the form itself keeps it disabled until pending, uncertain, invalid and still-needed are all empty. Use validate_form instead when you want the per-field rule messages as JSON.",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: true },
+      execute: () => {
+        const s = summary();
+        const name = (e) => e.label + " (" + e.id + ")";
+        const list = (k) => s[k].map(name).join(", ");
+        // The notes are whole sentences of their own, so the joiner has to be a
+        // semicolon and their full stop has to come off, or every reason ends "..".
+        const noted = (k) => s[k]
+          .map((e) => name(e) + ": " + String(e.note || "no reason recorded").replace(/\.$/, ""))
+          .join("; ");
+        const bucket = (k, label, body) => label + ": " + s[k].length + (s[k].length ? " — " + body + "." : ".");
+        return ok([
+          state.form + " — " + s.complete.length + " of " + s.answerable + " complete; "
+            + (s.canSubmit ? "ready for Priya to submit." : "submit not yet possible."),
+          "Complete: " + s.complete.length + " of " + s.answerable + " answerable questions on screen"
+            + " right now — conditional questions come and go as answers change, so that total moves,"
+            + " and an optional question left blank belongs to no bucket at all.",
+          bucket("pending", "Pending your review", list("pending") + "; nothing there counts until Priya accepts it"),
+          bucket("uncertain", "Uncertain", noted("uncertain")),
+          bucket("invalid", "Invalid", noted("invalid")),
+          bucket("missing", "Still needed", list("missing")),
+          s.canSubmit
+            ? "Verdict: the application is ready and the submit button is unlocked for Priya. I still"
+              + " cannot press it: there is no tool on this page that submits, by design — the button is hers alone."
+            : "Verdict: Priya cannot submit yet — " + s.pending.length + " pending, " + s.uncertain.length
+              + " uncertain, " + s.invalid.length + " invalid, " + s.missing.length + " still needed."
+              + " I cannot submit either: there is no tool on this page that submits, by design — the"
+              + " button is hers alone.",
+        ].join("\n"));
+      },
+    },
+  ];
+
+  /* ---- run a tool through one path, whoever called it ---- */
+  function invoke(tool, args, actor) {
+    const raw = tool.execute(args || {});
+    const result = typeof raw === "string" ? raw : raw.text;
+    if (actor === "agent") log("agent", tool.name + " → " + result.split("\n")[0].slice(0, 96));
+    render();
+    return result;
+  }
+
+  /* ---- registration ---- */
+  const mc = (typeof document !== "undefined" && document.modelContext) || null;
+  const regCtl = mc ? new AbortController() : null;
+
+  function registerAll() {
+    if (!mc) return;
+    for (const t of TOOLS) {
+      mc.registerTool({
+        name: t.name, description: t.description, inputSchema: t.inputSchema,
+        annotations: Object.assign({ readOnlyHint: false, untrustedContentHint: false }, t.annotations || {}),
+        execute: async (args) => invoke(t, args, "agent"),
+      }, { signal: regCtl.signal });
+    }
+  }
+
+  // Seam for state-dependent tools (SPEC.md): register with an own
+  // AbortController and { signal }, abort when the condition clears —
+  // tablemap's resolve_conflicts is the reference implementation.
+  function refreshDynamicTool() {}
+
+  /* ---- status pill ---- */
+  function status() {
+    const p = $("status"), t = $("status-t");
+    if (mc) { p.classList.add("live"); t.textContent = "WebMCP connected · " + TOOLS.length + " tools"; }
+    else { p.classList.add("bad"); t.textContent = "WebMCP off · use the tool console"; }
+  }
+
+  /* ============================================================
+     5. TOOL CONSOLE  —  drive the same tools without an agent.
+     ============================================================ */
+  let picked = TOOLS[0];
+  const sample = (t) => t.sampleArgs ? JSON.stringify(t.sampleArgs, null, 2) : "{}";
+
+  function buildConsole() {
+    const list = $("tool-list"); list.replaceChildren();
+    TOOLS.forEach((t) => {
+      const b = el("button", "tool-b" + (t === picked ? " sel" : ""));
+      b.appendChild(el("span", null, t.name));
+      b.appendChild(el("small", null, t.description.split(".")[0] + "."));
+      b.onclick = () => { picked = t; $("args").value = sample(t); $("sig").textContent = t.name + "(…)"; buildConsole(); };
+      list.appendChild(b);
+    });
+    $("sig").textContent = picked.name + "(…)";
+  }
+
+  function runPicked() {
+    const out = $("out");
+    out.classList.remove("err");
+    let args;
+    try { args = JSON.parse($("args").value || "{}"); }
+    catch { out.classList.add("err"); out.textContent = "That is not valid JSON. Check the quotes and commas."; return; }
+    try {
+      const res = invoke(picked, args, "agent");
+      out.textContent = res;
+    } catch (e) {
+      out.classList.add("err");
+      out.textContent = "Error: " + e.message;
+      log("agent", picked.name + " → error: " + e.message);
+    }
+  }
+
+  /* ============================================================
+     6. WIRING
+     ============================================================ */
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.onclick = () => {
+      document.querySelectorAll(".tab").forEach((o) => {
+        const on = o === tab;
+        o.setAttribute("aria-selected", String(on));
+        $("p-" + o.dataset.p).hidden = !on;
+      });
+    };
+  });
+
+  $("run").onclick = runPicked;
+
+  /* ---- boot ---- */
+  seed();
+  $("brief").textContent = BRIEF;
+  registerAll();
+  status();
+  buildConsole();
+  $("args").value = sample(picked);
+  render();
+  explainGaps();
+  log("you", "Opened the application — 6 steps, "
+    + state.steps.reduce((a, s) => a + s.fields.filter((f) => f.type !== "repeater").length, 0)
+    + " questions, a third of them conditional");
+})();
+</script>
+</body>
+</html>
