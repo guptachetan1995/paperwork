@@ -106,6 +106,35 @@ validation. State is in memory by design; a reload gives you a blank form.
 Developed against a headless-Chromium Playwright suite that drives the app through the
 same tool entry points an agent uses.
 
+## Demo video script (~2:30)
+
+1. **0:00** — Show the blank six-step form next to Priya's brief: a plain-language
+   paragraph — where she's moving, her partner, the dog, the bike, one prior claim.
+   "This is what a person actually knows. Not what the form asks for, in the form's
+   own order."
+2. **0:15** — Ask the agent to fill the Applicant step from the brief. Fields light up
+   purple as drafts land — `fill_field`, `fill_section` calls in the activity log.
+   "Nothing is answered yet. It's drafted, waiting for her."
+3. **0:40** — Point at "Time at current address" — a select field, options
+   `under_2`/`2_plus` — correctly set from "moved in two years ago" in the brief.
+   "It didn't paste text into a dropdown. It matched what she said to what the form
+   actually offers."
+4. **0:55** — Ask the agent to check the fraud acknowledgement for her. It refuses,
+   live: *"fraud_ack is a human-only attestation — Priya must answer it herself."*
+   "That's not an instruction telling it not to. There's no tool that can touch it."
+5. **1:15** — Click the ✓ on one drafted field — the highlight clears, it becomes her
+   own answer. "I'm not retyping anything it got right. I'm just saying yes."
+6. **1:35** — Ask "what does construction class actually want here?" — `explain_field`
+   jumps to it and explains in plain language, next to the field itself.
+7. **1:55** — Give the agent the claims detail from the brief — one prior claim, water
+   damage, March 2024, about $1,800 — and watch `add_repeater_item` spawn a numbered
+   claim entry and fill it.
+8. **2:10** — Ask "what's left before I can submit?" — `review_submission` reads the
+   application back in prose. Point out the Submit button itself, disabled, and that
+   there is no submit tool in the list at all — only a human hand can press it.
+9. **2:25** — Close on the form, mostly filled, three attestations still waiting on
+   her.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
