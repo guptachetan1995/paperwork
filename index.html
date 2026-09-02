@@ -179,6 +179,13 @@
     text-transform: uppercase; color: var(--ink-2); margin-bottom: 8px; }
   .bc-b { margin: 0; font-family: Fraunces, Georgia, serif; font-size: 13.5px;
     line-height: 1.7; color: var(--ink); }
+  .bc-tally {
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft);
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-2);
+    display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; min-width: 0;
+  }
+  .bc-tally b { font-variant-numeric: tabular-nums; color: var(--ink-3); font-weight: 600; }
+  .bc-tally b.nonzero { color: var(--accent); }
   .bc-hint { margin-top: 10px; font-size: 11.5px; color: var(--ink-3); }
 
   /* ---------- form fields ---------- */
@@ -191,7 +198,7 @@
   .field > label {
     font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .12em;
     text-transform: uppercase; color: var(--ink-2);
-    display: flex; gap: 6px; align-items: baseline;
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline;
   }
   .field > label .req { color: var(--crit); }
   .field input, .field select, .field textarea {
@@ -244,12 +251,39 @@
     background: var(--crit-wash);
     border-radius: 0 8px 8px 0;
   }
+  /* ---- conditional sub-forms: animate in/out (SPEC: "conditionals visibly unfold") ----
+     render() rebuilds the canvas from scratch every pass (form.replaceChildren()) — there
+     is no persisting DOM node a `transition` could animate between two states, so these
+     are one-shot MOUNT keyframes instead, added only on the render a field's showIf
+     actually flips (see trackConditionals). Same substitution apps/tablemap already makes
+     for the identical reason (.table.pulse / @keyframes pulse). A generous max-height cap
+     avoids clipping a tall repeater while still reading as a genuine grow/shrink.
+     field-exit is kept in the DOM for one last animated beat after visible(f) goes false;
+     pointer-events is off so nothing already-hidden can be typed into mid-fade. */
+  .field-enter { animation: field-reveal .22s ease-out; overflow: hidden; }
+  .field-exit  { animation: field-collapse .22s ease-in forwards; overflow: hidden; pointer-events: none; }
+  @keyframes field-reveal {
+    from { opacity: 0; transform: translateY(-6px); max-height: 0; }
+    to   { opacity: 1; transform: none; max-height: 2000px; }
+  }
+  @keyframes field-collapse {
+    from { opacity: 1; max-height: 2000px; }
+    to   { opacity: 0; max-height: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .field-enter, .field-exit { animation: none; }
+    .field-exit { opacity: 0; max-height: 0; overflow: hidden; }
+  }
   .unc {
     font-family: "IBM Plex Mono", monospace; font-size: 9px; letter-spacing: .08em;
     color: var(--accent); border: 1px solid var(--accent);
     border-radius: 999px; padding: 1px 7px; white-space: nowrap; align-self: center; flex: none;
   }
-  .field .help.agent-note { color: var(--accent); }
+  .unc-note {
+    flex-basis: 100%; font-family: "IBM Plex Sans", sans-serif; font-size: 11.5px;
+    font-weight: 400; letter-spacing: normal; text-transform: none;
+    color: var(--accent); line-height: 1.4;
+  }
   .pacts { margin-left: auto; display: inline-flex; gap: 4px; align-self: center; }
   .pa {
     border: 1px solid var(--accent); background: var(--surface); color: var(--accent);
@@ -448,6 +482,7 @@
     <aside class="brief-card">
       <div class="bc-t">Priya's brief</div>
       <p class="bc-b" id="brief"></p>
+      <div class="bc-tally" id="bc-tally">pending: <b id="bc-pending">0</b> / uncertain: <b id="bc-uncertain">0</b></div>
       <div class="bc-hint">Ask the agent to fill the application from this — the demo needs no typing.</div>
     </aside>
   </main>
@@ -1009,6 +1044,24 @@
   // one highlight cannot re-yank the canvas while Priya is typing somewhere else.
   let focusId = null, focusTimer = null, lastScrolledFocus = null;
 
+  // ---- conditional show/hide, animated (SPEC: "conditionals visibly unfold") --------
+  // Exactly like focusId above: VIEW-ONLY, never part of `state`, so get_form and every
+  // tool stay blind to it — a field's true visibility is always visible(f), never this.
+  // Scoped to ONE step (closingStep) because switching steps is navigation, not a
+  // reveal: trackConditionals resets tracking rather than replaying an animation for
+  // fields nobody is looking at. See trackConditionals, called from render().
+  let closingStep = null, closingIds = new Set(), closingTimers = new Map();
+  let prevVisibleIds = new Set();
+  const EXIT_MS = 240;
+
+  function resetConditionalTracking() {
+    for (const t of closingTimers.values()) clearTimeout(t);
+    closingTimers.clear();
+    closingIds.clear();
+    closingStep = null;
+    prevVisibleIds = new Set();
+  }
+
   // Also view-only, and also deliberately NOT in `state`: validity is derived, so
   // this map is one render pass's own copy of validate().errors, rebuilt at the top
   // of render() and read by fieldEl as it builds each wrapper. Nothing writes it
@@ -1046,10 +1099,48 @@
     return { step: state.steps[index], index: index + 1 };
   }
 
+  // Conditional fields only — instance sub-fields never carry their own showIf, they
+  // inherit their repeater's, so animating the CONTAINER is enough. Returns the ids
+  // that just became visible THIS pass (render()'s canvas loop marks those .field-enter);
+  // ids that just stopped being visible are added to closingIds so render() keeps
+  // rendering them, marked .field-exit, until their timer drops them for good. Switching
+  // steps means closingStep no longer matches, which clears every pending timer and both
+  // sets before tracking the new step fresh — a quick rail-click away and back inside the
+  // exit window must never fire a stale timeout into a different visit to this step.
+  function trackConditionals(step) {
+    if (closingStep !== step.id) { resetConditionalTracking(); closingStep = step.id; }
+    const curVisible = new Set();
+    for (const f of step.fields) if (f.showIf && visible(f)) curVisible.add(f.id);
+
+    const entering = new Set();
+    for (const id of curVisible) {
+      if (closingTimers.has(id)) { clearTimeout(closingTimers.get(id)); closingTimers.delete(id); closingIds.delete(id); }
+      if (!prevVisibleIds.has(id)) entering.add(id);
+    }
+    for (const id of prevVisibleIds) {
+      if (curVisible.has(id) || closingIds.has(id)) continue;
+      closingIds.add(id);
+      closingTimers.set(id, setTimeout(() => {
+        closingIds.delete(id); closingTimers.delete(id); render();
+      }, EXIT_MS));
+    }
+    prevVisibleIds = curVisible;
+    return entering;
+  }
+
   function render() {
     // Derived afresh every pass — errors only. `missing` is deliberately absent:
     // it is reported by validate_form and never painted.
     errNow = new Map(validate().errors.map((e) => [e.id, e.message]));
+
+    // ONE summary() call feeds the brief-card tally AND the Review mirror (passed
+    // through below) — a second copy is exactly how two surfaces start disagreeing
+    // about what is pending.
+    const sum = summary();
+    $("bc-pending").textContent = sum.pending.length;
+    $("bc-pending").classList.toggle("nonzero", sum.pending.length > 0);
+    $("bc-uncertain").textContent = sum.uncertain.length;
+    $("bc-uncertain").classList.toggle("nonzero", sum.uncertain.length > 0);
 
     // header counts, over what is visible and answerable right now
     const vis = [];
@@ -1084,8 +1175,19 @@
     const form = $("form"); form.replaceChildren();
     const controls = sectionControls(cur);
     if (controls) form.appendChild(controls);
-    if (cur.id === "review") renderReview(form, cur);
-    else cur.fields.forEach((f) => { if (visible(f)) form.appendChild(fieldEl(f)); });
+    if (cur.id === "review") {
+      // renderReview never calls trackConditionals (Review has no conditional
+      // fields of its own) — clear any tracking left over from whatever step
+      // was last on screen, so returning to it later starts fresh.
+      if (closingStep !== null) resetConditionalTracking();
+      renderReview(form, cur, sum);
+    } else {
+      const entering = trackConditionals(cur);
+      cur.fields.forEach((f) => {
+        if (visible(f)) { form.appendChild(fieldEl(f, { enter: entering.has(f.id) })); return; }
+        if (closingIds.has(f.id)) form.appendChild(fieldEl(f, { exit: true }));
+      });
+    }
 
     // Scrolling happens HERE and nowhere else: fieldEl returns a DETACHED node and a
     // repeater's sub-fields are appended into a detached box, so scrollIntoView inside
@@ -1138,13 +1240,14 @@
     return bar;
   }
 
-  function fieldEl(f) {
-    if (f.type === "repeater") return repeaterEl(f);
+  function fieldEl(f, opts) {
+    if (f.type === "repeater") return repeaterEl(f, opts);
     // `error` rides ALONGSIDE the provenance class, never instead of it: an
     // accepted answer that turns out to be invalid is still the agent's draft that
     // Priya ratified, and the audit trail has to keep saying so.
     const bad = errNow.get(f.id) || "";
-    const wrap = el("div", "field " + f.state + (bad ? " error" : "") + (f.type === "checkbox" ? " check" : "") + (focusId === f.id ? " focus" : ""));
+    const wrap = el("div", "field " + f.state + (bad ? " error" : "") + (f.type === "checkbox" ? " check" : "") + (focusId === f.id ? " focus" : "")
+      + (opts && opts.enter ? " field-enter" : "") + (opts && opts.exit ? " field-exit" : ""));
     wrap.dataset.fid = f.id;
 
     if (f.type === "checkbox") {
@@ -1165,10 +1268,18 @@
       lab.appendChild(el("span", null, f.label));
       if (f.required) lab.appendChild(el("span", "req", "required"));
       if (f.humanOnly) lab.appendChild(el("span", "ho", "human-only"));
+      // uncNote is appended LAST, after .pacts — not right after the chip. A
+      // .unc-note (flex-basis:100%) always wraps to its own line; appending it
+      // before .pacts would push the accept/edit buttons down with it. This way
+      // .pacts stays on the label's first line at its usual top-right spot, and
+      // only the note drops to the line below — still reads as "the chip's note",
+      // just not literally the chip's next DOM sibling when .pacts is present.
+      let uncNote = null;
       if (f.state === "uncertain") {
         const q = el("span", "unc", "?");
-        q.title = "The agent flagged this uncertain — its note is below";
+        q.title = "The agent flagged this uncertain";
         lab.appendChild(q);
+        if (f.note) uncNote = el("span", "unc-note", f.note);
       }
       if (f.state === "pending" || (f.state === "uncertain" && f.value !== "")) {
         const acts = el("span", "pacts");
@@ -1188,6 +1299,7 @@
         acts.append(acc, ed);
         lab.appendChild(acts);
       }
+      if (uncNote) lab.appendChild(uncNote);
       wrap.appendChild(lab);
 
       if (f.type === "yesno") {
@@ -1243,13 +1355,13 @@
     // lines is noise that hides the two sentences that actually matter.
     if (bad) wrap.appendChild(el("div", "help err-msg", bad));
     if (DISCOUNTS[f.id] && f.value === "yes") wrap.appendChild(el("div", "help disc", DISCOUNTS[f.id]));
-    if (f.note) wrap.appendChild(el("div", "help agent-note", f.note));
     return wrap;
   }
 
-  function repeaterEl(rep) {
+  function repeaterEl(rep, opts) {
     const noun = NOUN[rep.id] || "Entry";
-    const wrap = el("div", "field repeater" + (focusId === rep.id ? " focus" : ""));
+    const wrap = el("div", "field repeater" + (focusId === rep.id ? " focus" : "")
+      + (opts && opts.enter ? " field-enter" : "") + (opts && opts.exit ? " field-exit" : ""));
     wrap.dataset.fid = rep.id;
     const lab = el("label");
     lab.appendChild(el("span", null, rep.label));
@@ -1293,9 +1405,7 @@
   // the buckets twice is exactly how a screen starts contradicting itself, and it
   // is the same call review_submission makes, so the prose and the page cannot
   // disagree either.
-  function renderReview(form, cur) {
-    const sum = summary();
-
+  function renderReview(form, cur, sum) {
     const m = el("div", "mirror");
     m.append(
       el("div", "mir-t", "Submission review"),
@@ -1792,7 +1902,7 @@
     },
     {
       name: "add_repeater_item",
-      description: "Add one new item to a repeating list — claims (Prior claims & history) or scheduled_items (Coverage) — and optionally draft its fields in the same call. values maps the item's own field ids (for claims: date, type, amount, at_current_address, resolved; for scheduled_items: description, value, appraisal) to answers; each draft lands pending, exactly as fill_field would write it, committed only when Priya accepts. The reply names the new item's dotted field ids, such as claims.2.amount, so fill_field can amend any of them, then one \"set pending\" or \"skipped … — <reason>\" line per value — a bad value skips that field, never the item. Refuses, creating nothing, when the repeater id is unknown or the list is hidden because its controlling question is not answered yes (the refusal names that question). It cannot remove items — removal is Priya's Remove button — and it cannot accept anything.",
+      description: "Add one new item to a repeating list — claims (Prior claims & history) or scheduled_items (Coverage) — and optionally draft its fields in the same call. values maps the item's own field ids (for claims: date, type, amount, at_current_address, resolved; for scheduled_items: description, value, appraisal) to answers; each draft lands pending, exactly as fill_field would write it, committed only when Priya accepts. If the list's controlling question just auto-spawned its first instance and nothing has touched it yet, this fills that same instance rather than leaving it empty behind a new one — the reply's dotted ids land on .1, not .2 — but the moment the list already holds more than one instance, or its sole instance has any field beyond \"empty\", every call adds a genuinely new item as usual. The reply names the item's dotted field ids, such as claims.2.amount, so fill_field can amend any of them, then one \"set pending\" or \"skipped … — <reason>\" line per value — a bad value skips that field, never the item. Refuses, creating nothing, when the repeater id is unknown or the list is hidden because its controlling question is not answered yes (the refusal names that question). It cannot remove items — removal is Priya's Remove button — and it cannot accept anything.",
       inputSchema: {
         type: "object",
         properties: {
@@ -1812,7 +1922,14 @@
         if (!visible(rep))
           err(hiddenReason(rep));
 
-        const n = addInstance(rep);
+        // #80: the controlling question auto-spawns instance #1 empty; if it is
+        // still the only one and nothing on it has moved past "empty", fill IT
+        // instead of stranding it blank behind a new claims.2. Any other shape —
+        // 2+ instances, or the sole one already touched — always adds a new item,
+        // exactly as before.
+        const solelyEmpty = rep.instances.length === 1
+          && rep.instances[0].every((sf) => sf.state === "empty");
+        const n = solelyEmpty ? instN(rep.instances[0]) : addInstance(rep);
         const inst = rep.instances.find((i) => instN(i) === n);
         const badValues = a.values != null && (typeof a.values !== "object" || Array.isArray(a.values));
         const values = (!badValues && a.values) ? a.values : {};
